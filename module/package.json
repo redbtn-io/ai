@@ -23,7 +23,8 @@
     "url": "https://github.com/redbtn-io/ai/issues"
   },
   "dependencies": {
-    "openai": "^4.67.3",
+    "openai": "^4.97.0",
+    "tiktoken": "^1.0.21",
     "wav": "^1.0.2",
     "ws": "^8.18.0"
   },

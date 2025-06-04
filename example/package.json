@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "start": "npx tsx index.ts"
+  },
+  "dependencies": {
+    "@redbtn/ai": "file:../module/redbtn-ai-0.0.1.tgz",
+    "dotenv": "^16.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
