@@ -1,5 +1,4 @@
 
-import { InvokeOptions, Red } from '../..';
 import { extractThinking, logThinking } from '../utils/thinking';
 import { extractJSONWithDetails } from '../utils/json-extractor';
 import { invokeWithRetry } from '../utils/retry';
@@ -171,7 +170,6 @@ function normalizeRoutingDecision(raw: any): RoutingDecision {
 
 export const routerNode = async (state: any) => {
   const query = state.messages[state.messages.length - 1]?.content || state.query?.message || '';
-  const redInstance: Red = state.redInstance;
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   const messageId = state.messageId; // Get from top-level state, not options
@@ -180,14 +178,14 @@ export const routerNode = async (state: any) => {
   
   // Publish routing status to frontend
   if (messageId) {
-    await redInstance.messageQueue.publishStatus(messageId, {
+    await state.messageQueue.publishStatus(messageId, {
       action: 'routing',
       description: 'Analyzing query'
     });
   }
   
   // Log router start
-  await redInstance.logger.log({
+  await state.logger.log({
     level: 'info',
     category: 'router',
     message: `<cyan>🧭 Analyzing query:</cyan> <dim>${query.substring(0, 80)}${query.length > 80 ? '...' : ''}</dim>`,
@@ -208,7 +206,9 @@ export const routerNode = async (state: any) => {
     });
     
     // Force JSON output from Ollama models
-    const modelWithJsonFormat = redInstance.workerModel.withStructuredOutput({
+    const neuronId = state.defaultWorkerNeuronId || 'red-neuron';
+    const model = await state.neuronRegistry.getModel(neuronId, state.userId);
+    const modelWithJsonFormat = model.withStructuredOutput({
       schema: routingDecisionSchema
     });
     const response = await invokeWithRetry(modelWithJsonFormat, [
@@ -272,7 +272,7 @@ CRITICAL ROUTING RULES:
       
       if (hasLowercase || hasUppercase) {
         // Log raw response for debugging
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'debug',
           category: 'router',
           message: `<cyan>📋 Raw routing response before normalization</cyan>`,
@@ -288,7 +288,7 @@ CRITICAL ROUTING RULES:
         // Normalize and validate the response
         routingDecision = normalizeRoutingDecision(response);
         
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'success',
           category: 'router',
           message: `<green>✓ Multi-path routing decision received</green>`,
@@ -339,7 +339,7 @@ CRITICAL ROUTING RULES:
       
       if (typeof directText === 'string' && directText.trim().length > 0) {
         // Response contains direct text - stream it and skip to responder
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'info',
           category: 'router',
           message: `<cyan>📋 Router received text response, passing through</cyan>`,
@@ -364,7 +364,7 @@ CRITICAL ROUTING RULES:
       const rawResponse = typeof response === 'string' ? response : (response as any)?.content || JSON.stringify(response);
       
       // Log the full raw response for debugging
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'info',
         category: 'router',
         message: `<cyan>📋 Raw LLM response received</cyan>`,
@@ -388,7 +388,7 @@ CRITICAL ROUTING RULES:
         routingDecision = normalizeRoutingDecision(extractionResult.data);
         
         // Log successful extraction with details
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'success',
           category: 'router',
           message: `<green>✓ Multi-path routing decision extracted</green> <dim>(strategy: ${extractionResult.strategy})</dim>`,
@@ -407,7 +407,7 @@ CRITICAL ROUTING RULES:
         
       } else {
         // Log failure with full details
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'error',
           category: 'router',
           message: `<red>✗ Failed to extract routing decision from response</red>`,
@@ -441,7 +441,7 @@ CRITICAL ROUTING RULES:
     const winnerPath = winner.path as 'research' | 'command' | 'respond';
     
     // Log all three scores with winner highlighted
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'router',
       message: `<cyan>Multi-Path Confidence Scores:</cyan>
@@ -467,7 +467,7 @@ CRITICAL ROUTING RULES:
     
     // Log all reasoning as thinking
     if (generationId && conversationId) {
-      await redInstance.logger.logThought({
+      await state.logger.logThought({
         content: `Router Multi-Path Analysis:\n\nResearch (${(routingDecision.research.confidence * 100).toFixed(0)}%): ${routingDecision.research.reasoning}\n\nCommand (${(routingDecision.command.confidence * 100).toFixed(0)}%): ${routingDecision.command.reasoning}\n\nRespond (${(routingDecision.respond.confidence * 100).toFixed(0)}%): ${routingDecision.respond.reasoning}\n\nDecision: ${winnerPath.toUpperCase()}`,
         source: 'router',
         generationId,
@@ -481,7 +481,7 @@ CRITICAL ROUTING RULES:
       
       // Validate search query - if missing or too vague, fall back to respond
       if (!searchQuery || searchQuery.trim().length < 3) {
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'warn',
           category: 'router',
           message: `<yellow>⚠ Research won but query is missing/invalid, falling back to CHAT</yellow>`,
@@ -494,7 +494,7 @@ CRITICAL ROUTING RULES:
         });
         
         if (messageId) {
-          await redInstance.messageQueue.publishStatus(messageId, {
+          await state.messageQueue.publishStatus(messageId, {
             action: 'processing',
             description: 'Generating response',
             reasoning: `[Fallback] ${routingDecision.respond.reasoning}`,
@@ -506,7 +506,7 @@ CRITICAL ROUTING RULES:
       }
       
       if (messageId) {
-        await redInstance.messageQueue.publishToolStatus(messageId, {
+        await state.messageQueue.publishToolStatus(messageId, {
           status: '🔍 Searching the web...',
           action: 'web_search',
           reasoning: routingDecision.research.reasoning,
@@ -514,7 +514,7 @@ CRITICAL ROUTING RULES:
         });
       }
 
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'success',
         category: 'router',
         message: `<green>→ Route:</green> <bold>RESEARCH</bold> <dim>${searchQuery}</dim>`,
@@ -542,7 +542,7 @@ CRITICAL ROUTING RULES:
       const commandDetails = routingDecision.command.details || '';
       
       if (!commandDomain || !commandDetails) {
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'warn',
           category: 'router',
           message: `<yellow>⚠ Command won but missing domain/details, falling back to CHAT</yellow>`,
@@ -555,7 +555,7 @@ CRITICAL ROUTING RULES:
         });
         
         if (messageId) {
-          await redInstance.messageQueue.publishStatus(messageId, {
+          await state.messageQueue.publishStatus(messageId, {
             action: 'processing',
             description: 'Generating response',
             reasoning: routingDecision.respond.reasoning,
@@ -568,7 +568,7 @@ CRITICAL ROUTING RULES:
       
       // Route to command node with domain and details
       if (messageId) {
-        await redInstance.messageQueue.publishToolStatus(messageId, {
+        await state.messageQueue.publishToolStatus(messageId, {
           status: `⚡ Executing ${commandDomain} command...`,
           action: 'command',
           reasoning: routingDecision.command.reasoning,
@@ -576,7 +576,7 @@ CRITICAL ROUTING RULES:
         });
       }
       
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'success',
         category: 'router',
         message: `<green>→ Route:</green> <bold>COMMAND</bold> <dim>[${commandDomain}] ${commandDetails}</dim>`,
@@ -602,7 +602,7 @@ CRITICAL ROUTING RULES:
     
     // Default: respond wins (or fallback)
     if (messageId) {
-      await redInstance.messageQueue.publishStatus(messageId, {
+      await state.messageQueue.publishStatus(messageId, {
         action: 'processing',
         description: 'Generating response',
         reasoning: routingDecision.respond.reasoning,
@@ -610,7 +610,7 @@ CRITICAL ROUTING RULES:
       });
     }
     
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'success',
       category: 'router',
       message: `<green>→ Route:</green> <bold>CHAT</bold>`,
@@ -628,7 +628,7 @@ CRITICAL ROUTING RULES:
     
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'error',
       category: 'router',
       message: `<red>✗ Router error:</red> ${errorMessage} <dim>(defaulting to CHAT)</dim>`,

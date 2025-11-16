@@ -49,7 +49,7 @@ interface AddToVectorStoreState {
   
   // Standard graph state
   options?: InvokeOptions;
-  redInstance?: any;
+  logger?: any;
   messages?: any[];
 }
 
@@ -85,7 +85,6 @@ interface AddToVectorStoreState {
 export const addToVectorStoreNode = async (
   state: AddToVectorStoreState
 ): Promise<Partial<AddToVectorStoreState>> => {
-  const redInstance = state.redInstance;
   const options = state.options || {};
   const generationId = options.generationId;
   const conversationId = options.conversationId;
@@ -101,8 +100,8 @@ export const addToVectorStoreNode = async (
     const chunkingConfig = state.ragChunkingConfig || {};
 
     // Log operation start
-    if (redInstance?.logger) {
-      await redInstance.logger.log({
+    if (state.logger) {
+      await state.logger.log({
         level: 'info',
         category: 'rag',
         message: `<cyan>📚 Adding document to vector store...</cyan>`,
@@ -117,9 +116,10 @@ export const addToVectorStoreNode = async (
     }
 
     // Initialize vector store manager
+    // TODO Phase 1: Get URLs from state instead of process.env
     const vectorStore = new VectorStoreManager(
-      redInstance?.config?.vectorDbUrl || process.env.CHROMA_URL || 'http://localhost:8024',
-      redInstance?.config?.chatLlmUrl || process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+      process.env.CHROMA_URL || 'http://localhost:8024',
+      process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
     );
 
     // Health check
@@ -146,8 +146,8 @@ export const addToVectorStoreNode = async (
     );
 
     // Log success
-    if (redInstance?.logger) {
-      await redInstance.logger.log({
+    if (state.logger) {
+      await state.logger.log({
         level: 'success',
         category: 'rag',
         message: `<green>✓ Document added to vector store</green> <dim>(${chunksAdded} chunks, collection: ${collectionName})</dim>`,
@@ -173,8 +173,8 @@ export const addToVectorStoreNode = async (
     const errorMessage = error instanceof Error ? error.message : String(error);
     
     // Log error
-    if (redInstance?.logger) {
-      await redInstance.logger.log({
+    if (state.logger) {
+      await state.logger.log({
         level: 'error',
         category: 'rag',
         message: `<red>✗ Failed to add document to vector store:</red> ${errorMessage}`,

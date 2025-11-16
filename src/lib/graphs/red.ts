@@ -22,10 +22,38 @@ const RedGraphState = Annotation.Root({
     reducer: (x: InvokeOptions, y: InvokeOptions) => y,
     default: () => ({})
   }),
-  // Carry the Red instance through the graph so nodes can access configured models
-  redInstance: Annotation<object>({
-    reducer: (x: object, y: object) => y,
-    default: () => ({} as object)
+  // Per-user context annotations (Phase 0: Neuron System)
+  userId: Annotation<string>({
+    reducer: (x: string, y: string) => y,
+    default: () => ''
+  }),
+  accountTier: Annotation<number>({
+    reducer: (x: number, y: number) => y,
+    default: () => 4 // FREE tier
+  }),
+  neuronRegistry: Annotation<any>({
+    reducer: (x: any, y: any) => y
+  }),
+  defaultNeuronId: Annotation<string>({
+    reducer: (x: string, y: string) => y,
+    default: () => 'red-neuron'
+  }),
+  defaultWorkerNeuronId: Annotation<string>({
+    reducer: (x: string, y: string) => y,
+    default: () => 'red-neuron'
+  }),
+  // Infrastructure components (available to all nodes)
+  mcpClient: Annotation<any>({
+    reducer: (x: any, y: any) => y
+  }),
+  memory: Annotation<any>({
+    reducer: (x: any, y: any) => y
+  }),
+  messageQueue: Annotation<any>({
+    reducer: (x: any, y: any) => y
+  }),
+  logger: Annotation<any>({
+    reducer: (x: any, y: any) => y
   }),
   // Messages array that accumulates throughout the tool calling loop
   messages: Annotation<any[]>({

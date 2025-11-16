@@ -11,12 +11,15 @@ import { invokeWithRetry } from '../../lib/utils/retry';
 /**
  * Generate a title for the conversation based on the first few messages
  * Runs after 2nd message (initial title) and 6th message (refined title)
+ * 
+ * Phase 0: Uses neuronRegistry for per-user model loading
  */
 export async function generateTitleInBackground(
   conversationId: string,
   messageCount: number,
   red: Red,
-  chatModel: ChatOllama
+  userId: string,
+  defaultNeuronId: string = 'red-neuron'
 ): Promise<void> {
   try {
     // Only generate title after 2nd or 6th message
@@ -62,8 +65,9 @@ export async function generateTitleInBackground(
 
 ${conversationText}`;
 
-    // Generate title using LLM
-    const response = await invokeWithRetry(chatModel, [{ role: 'user', content: titlePrompt }], {
+    // Generate title using LLM (Phase 0: dynamic neuron loading)
+    const model = await red.neuronRegistry.getModel(defaultNeuronId, userId);
+    const response = await invokeWithRetry(model, [{ role: 'user', content: titlePrompt }], {
       context: 'title generation',
     });
     const rawContent = response.content as string;

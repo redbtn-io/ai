@@ -19,7 +19,17 @@ import { getNodeSystemPrefix } from '../utils/node-helpers';
 interface ResponderState {
   query: { message: string };
   options: InvokeOptions;
-  redInstance: Red;
+  // Phase 0: Per-user context
+  userId: string;
+  accountTier: number;
+  neuronRegistry: any;
+  defaultNeuronId: string;
+  defaultWorkerNeuronId: string;
+  // Infrastructure
+  memory: any;
+  messageQueue: any;
+  logger: any;
+  // Node-specific
   contextMessages?: any[]; // Pre-loaded from router
   systemMessage?: string; // Optional override
   messages?: any[]; // If already built by tool nodes
@@ -31,7 +41,6 @@ interface ResponderState {
 
 export const responderNode = async (state: ResponderState): Promise<any> => {
   try {
-    const redInstance: Red = state.redInstance;
     const query = state.query;
     const options: InvokeOptions = state.options || {};
     const conversationId = options.conversationId;
@@ -40,7 +49,7 @@ export const responderNode = async (state: ResponderState): Promise<any> => {
 
     // Check if a node already generated the final response
     if (state.finalResponse) {
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'info',
         category: 'responder',
         message: `<cyan>💬 Using pre-generated response (${state.finalResponse.length} chars)</cyan>`,
@@ -60,7 +69,7 @@ export const responderNode = async (state: ResponderState): Promise<any> => {
     if ((state as any).directResponse) {
       const directText = (state as any).directResponse;
       
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'info',
         category: 'responder',
         message: `<cyan>💬 Streaming direct response from router (${directText.length} chars)</cyan>`,
@@ -78,14 +87,14 @@ export const responderNode = async (state: ResponderState): Promise<any> => {
 
     // Publish status to frontend
     if (messageId) {
-      await redInstance.messageQueue.publishStatus(messageId, {
+      await state.messageQueue.publishStatus(messageId, {
         action: 'thinking',
         description: 'Generating response'
       });
     }
 
     // Log responder start
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'responder',
       message: `<cyan>💬 Generating response...</cyan>`,
@@ -93,8 +102,10 @@ export const responderNode = async (state: ResponderState): Promise<any> => {
       conversationId,
     });
 
-    // Use the base chat model without tools
-    const modelWithTools = redInstance.chatModel;
+    // Get the user's default chat neuron
+    const neuronId = state.defaultNeuronId || 'red-neuron';
+    const model = await state.neuronRegistry.getModel(neuronId, state.userId);
+    const modelWithTools = model;
 
     // Build messages array
     let messages: any[] = [];
@@ -222,7 +233,7 @@ CRITICAL RULES:
                             userQuery.includes('where') || userQuery.includes('who');
           
           if ((isNonAnswer || (isTooShort && isQuestion)) && replannedCount < MAX_REPLANS) {
-            await redInstance.logger.log({
+            await state.logger.log({
               level: 'warn',
               category: 'responder',
               message: `<yellow>⚠ Inadequate response detected (${cleanedContent.length} chars), requesting replan</yellow>`,

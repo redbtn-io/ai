@@ -1,5 +1,4 @@
 
-import { Red } from '../..';
 import type { PlanStep } from './planner';
 
 /**
@@ -15,7 +14,6 @@ import type { PlanStep } from './planner';
  * @returns Updated state with routing information
  */
 export const executorNode = async (state: any) => {
-  const redInstance: Red = state.redInstance;
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   const executionPlan = state.executionPlan;
@@ -23,7 +21,7 @@ export const executorNode = async (state: any) => {
   
   // Safety check
   if (!executionPlan || !executionPlan.steps || executionPlan.steps.length === 0) {
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'error',
       category: 'executor',
       message: '<red>❌ No execution plan found, falling back to responder</red>',
@@ -38,7 +36,7 @@ export const executorNode = async (state: any) => {
   
   // Check if we're past the end of the plan
   if (currentStepIndex >= executionPlan.steps.length) {
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'warn',
       category: 'executor',
       message: `<yellow>⚠ Step index ${currentStepIndex} exceeds plan length ${executionPlan.steps.length}, ending</yellow>`,
@@ -53,7 +51,7 @@ export const executorNode = async (state: any) => {
   
   const currentStep: PlanStep = executionPlan.steps[currentStepIndex];
   
-  await redInstance.logger.log({
+  await state.logger.log({
     level: 'info',
     category: 'executor',
     message: `<cyan>▶️  Executing step ${currentStepIndex + 1}/${executionPlan.steps.length}:</cyan> <bold>${currentStep.type.toUpperCase()}</bold> - ${currentStep.purpose}`,
@@ -85,7 +83,7 @@ export const executorNode = async (state: any) => {
       };
     
     default:
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'error',
         category: 'executor',
         message: `<red>❌ Unknown step type: ${(currentStep as any).type}</red>`,

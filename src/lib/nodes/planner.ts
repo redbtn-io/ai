@@ -1,5 +1,4 @@
 
-import { Red } from '../..';
 import { invokeWithRetry } from '../utils/retry';
 import { getNodeSystemPrefix } from '../utils/node-helpers';
 import { extractJSON } from '../utils/json-extractor';
@@ -178,7 +177,6 @@ const planningDecisionSchema = {
  */
 export const plannerNode = async (state: any) => {
   const query = state.messages[state.messages.length - 1]?.content || state.query?.message || '';
-  const redInstance: Red = state.redInstance;
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   const messageId = state.messageId;
@@ -191,7 +189,7 @@ export const plannerNode = async (state: any) => {
   const replannedCount = state.replannedCount || 0;
   
   if (isReplanning) {
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'planner',
       message: `<yellow>🔄 Re-planning (attempt ${replannedCount + 1}/3):</yellow> ${replanReason}`,
@@ -202,14 +200,14 @@ export const plannerNode = async (state: any) => {
   
   // Publish planning status to frontend
   if (messageId) {
-    await redInstance.messageQueue.publishStatus(messageId, {
+    await state.messageQueue.publishStatus(messageId, {
       action: 'planning',
       description: isReplanning ? 'Re-planning approach' : 'Planning execution steps'
     });
   }
   
   // Log planner start
-  await redInstance.logger.log({
+  await state.logger.log({
     level: 'info',
     category: 'planner',
     message: `<cyan>🗺️  Planning execution:</cyan> <dim>${query.substring(0, 80)}${query.length > 80 ? '...' : ''}</dim>`,
@@ -241,7 +239,9 @@ Create a NEW plan that addresses the issue.`;
     }
     
     // Use structured output to force valid planning JSON
-    const modelWithJson = redInstance.workerModel.withStructuredOutput({
+    const neuronId = state.defaultWorkerNeuronId || 'red-neuron';
+    const model = await state.neuronRegistry.getModel(neuronId, state.userId);
+    const modelWithJson = model.withStructuredOutput({
       schema: planningDecisionSchema
     });
     
@@ -326,7 +326,7 @@ CRITICAL: Every plan MUST end with a 'respond' step. This is not optional.`
         purpose: 'Provide final answer to user'
       });
       
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'warn',
         category: 'planner',
         message: '<yellow>⚠ Plan missing respond step, auto-added</yellow>',
@@ -348,7 +348,7 @@ CRITICAL: Every plan MUST end with a 'respond' step. This is not optional.`
       })
       .join('\n');
     
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'planner',
       message: `<green>📋 Execution Plan (${executionPlan.steps.length} steps):</green>\n<dim>${stepsList}</dim>\n<cyan>Strategy:</cyan> <dim>${executionPlan.reasoning}</dim>`,
@@ -357,7 +357,7 @@ CRITICAL: Every plan MUST end with a 'respond' step. This is not optional.`
     });
     
     // Store plan in database for debugging
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'debug',
       category: 'planner',
       message: 'Full execution plan',
@@ -379,7 +379,7 @@ CRITICAL: Every plan MUST end with a 'respond' step. This is not optional.`
     };
     
   } catch (error) {
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'error',
       category: 'planner',
       message: `<red>❌ Planning failed:</red> ${error instanceof Error ? error.message : String(error)}`,

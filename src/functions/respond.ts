@@ -10,9 +10,12 @@ import * as background from './background';
 /**
  * Handles a direct, on-demand request from a user-facing application.
  * Automatically manages conversation history, memory, and summarization.
+ * 
+ * Phase 0: Now requires userId in options for per-user model loading.
+ * 
  * @param red The Red instance
  * @param query The user's input or request data (must have a 'message' property)
- * @param options Metadata about the source of the request and conversation settings
+ * @param options Metadata about the source of the request and conversation settings (MUST include userId)
  * @returns For non-streaming: the full AIMessage object with content, tokens, metadata, and conversationId.
  *          For streaming: an async generator that yields metadata first (with conversationId), then string chunks, then finally the full AIMessage.
  */
@@ -21,6 +24,35 @@ export async function respond(
   query: { message: string },
   options: InvokeOptions = {}
 ): Promise<any | AsyncGenerator<string | any, void, unknown>> {
+  // Phase 0: Require userId for per-user model loading
+  const userId = (options as any).userId;
+  if (!userId) {
+    throw new Error('[Respond] userId is required in options for per-user model loading (Phase 0)');
+  }
+  
+  // Phase 0: Load user from database to get account tier and default neurons
+  let accountTier = 4; // Default to FREE
+  let defaultNeuronId = 'red-neuron';
+  let defaultWorkerNeuronId = 'red-neuron';
+  
+  try {
+    // Load user model (cross-package access - technical debt, will clean up in Phase 1)
+    const User = require('../../webapp/src/lib/database/models/auth/User').default;
+    const user = await User.findById(userId);
+    
+    if (user) {
+      accountTier = user.accountLevel;
+      defaultNeuronId = user.defaultNeuronId || 'red-neuron';
+      defaultWorkerNeuronId = user.defaultWorkerNeuronId || 'red-neuron';
+      console.log(`[Respond] User ${userId} - Tier: ${accountTier}, Default Neuron: ${defaultNeuronId}`);
+    } else {
+      console.warn(`[Respond] User ${userId} not found in database, using FREE tier defaults`);
+    }
+  } catch (error) {
+    console.error('[Respond] Error loading user from database:', error);
+    console.warn('[Respond] Falling back to FREE tier defaults');
+  }
+  
   // Generate conversation ID if not provided (use memory directly for ID generation since it's a simple utility)
   const conversationId = options.conversationId || red.memory.generateConversationId(query.message);
   
@@ -32,7 +64,7 @@ export async function respond(
   const userMessageId = options.userMessageId || `msg_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   const assistantMessageId = `msg_${Date.now() + 1}_${Math.random().toString(36).substring(7)}`;
   
-  console.log(`[Respond] Starting respond() - conversationId:${conversationId}, requestId:${requestId}, userMessageId:${userMessageId}, query:${query.message.substring(0, 50)}`);
+  console.log(`[Respond] Starting respond() - conversationId:${conversationId}, requestId:${requestId}, userMessageId:${userMessageId}, userId:${userId}, tier:${accountTier}, query:${query.message.substring(0, 50)}`);
   
   // Start a new generation (will fail if one is already in progress)
   const generationId = await red.logger.startGeneration(conversationId);
@@ -70,12 +102,23 @@ export async function respond(
     toolExecutions: [] // User messages don't have tool executions
   }, { conversationId, generationId, messageId: requestId });
   
+  // Phase 0: Build per-user initial state with neuron system
   const initialState = {
     query,
     options: { ...options, conversationId, generationId }, // Add generationId to options
-    redInstance: red, // Pass the entire instance into the graph
     messageId: requestId, // Add requestId to state for tool event publishing
     messages: [{ role: 'user', content: query.message }], // Add initial message for precheck/classifier
+    // Phase 0: Per-user context
+    userId,
+    accountTier,
+    neuronRegistry: red.neuronRegistry,
+    defaultNeuronId,
+    defaultWorkerNeuronId,
+    // Infrastructure components
+    memory: red.memory,
+    messageQueue: red.messageQueue,
+    logger: red.logger,
+    mcpClient: red.mcpRegistry,
   };
 
   // Inject a system message into the graph state for every respond() call.
@@ -100,7 +143,7 @@ CRITICAL RULES:
   // Check if streaming is requested
   if (options.stream) {
     // Use LangGraph's streaming capabilities to stream through the graph
-    return streamThroughGraphWithMemory(red, initialState, conversationId, generationId, requestId, assistantMessageId);
+    return streamThroughGraphWithMemory(red, initialState, conversationId, generationId, requestId, assistantMessageId, userId, defaultNeuronId);
   } else {
     // Invoke the graph and return the full AIMessage
     const result = await redGraph.invoke(initialState);
@@ -177,11 +220,17 @@ CRITICAL RULES:
     }, { conversationId, generationId, messageId: requestId });
     const messageCount = metadataResult.isError ? 0 : JSON.parse(metadataResult.content?.[0]?.text || '{}').messageCount || 0;
     
+    // Phase 0: Trigger background tasks with model factory functions
+    // Factory function to create model instance for background tasks
+    const getModel = async () => {
+      return await red.neuronRegistry.getModel(defaultNeuronId, userId);
+    };
+    
     // Trigger background summarization (non-blocking)
-    background.summarizeInBackground(conversationId, red.memory, red.chatModel);
+    background.summarizeInBackground(conversationId, red.memory, getModel);
     
     // Trigger background title generation (non-blocking)
-    background.generateTitleInBackground(conversationId, messageCount, red, red.chatModel);
+    background.generateTitleInBackground(conversationId, messageCount, red, userId, defaultNeuronId);
     
     // Attach conversationId to response for server access
     return { ...response, conversationId };
@@ -192,6 +241,9 @@ CRITICAL RULES:
  * Internal method to handle streaming responses through the graph with memory management.
  * Yields metadata first (with conversationId), then string chunks, then the final AIMessage object.
  * Extracts and logs thinking from models like DeepSeek-R1.
+ * 
+ * Phase 0: Now takes userId and defaultNeuronId for per-user model loading.
+ * 
  * @private
  */
 async function* streamThroughGraphWithMemory(
@@ -200,7 +252,9 @@ async function* streamThroughGraphWithMemory(
   conversationId: string,
   generationId: string,
   requestId?: string,
-  assistantMessageId?: string
+  assistantMessageId?: string,
+  userId?: string,
+  defaultNeuronId: string = 'red-neuron'
 ): AsyncGenerator<string | any, void, unknown> {
   try {
     // Import thinking utilities
@@ -276,7 +330,7 @@ async function* streamThroughGraphWithMemory(
             // Publish tool start event
             if (thinkingPublisher) {
               await thinkingPublisher.publishStart({
-                model: red.chatModel.model,
+                model: defaultNeuronId, // Phase 0: Use neuron ID instead of model name
               });
             }
             
@@ -317,7 +371,7 @@ async function* streamThroughGraphWithMemory(
                   { reasoning: thinkingBuffer.trim() },
                   { 
                     characterCount: thinkingBuffer.length,
-                    model: red.chatModel.model,
+                    model: defaultNeuronId, // Phase 0: Use neuron ID
                   }
                 );
               }
@@ -457,7 +511,7 @@ async function* streamThroughGraphWithMemory(
               content: thinking,
               timestamp: new Date(),
               metadata: {
-                model: red.chatModel.model,
+                model: defaultNeuronId, // Phase 0: Use neuron ID
               },
             });
             console.log(`[Respond] Stored thinking: ${thoughtId} with messageId: ${requestId}`);
@@ -572,7 +626,7 @@ async function* streamThroughGraphWithMemory(
         thinking: thinkingBuffer || undefined,
         route: (initialState as any).toolAction || 'chat',
         toolsUsed: (initialState as any).selectedTools,
-        model: red.chatModel.model,
+        model: defaultNeuronId, // Phase 0: Use neuron ID
         tokens: finalMessage?.usage_metadata,
       });
       
@@ -582,15 +636,21 @@ async function* streamThroughGraphWithMemory(
       }, { conversationId, generationId, messageId: requestId });
       const messageCount = metadataResult.isError ? 0 : JSON.parse(metadataResult.content?.[0]?.text || '{}').messageCount || 0;
       
+      // Phase 0: Trigger background tasks with model factory function
+      const getModel = async () => {
+        if (!userId) throw new Error('userId required for background tasks');
+        return await red.neuronRegistry.getModel(defaultNeuronId, userId);
+      };
+      
       // Trigger background summarization (non-blocking)
-      background.summarizeInBackground(conversationId, red.memory, red.chatModel);
+      background.summarizeInBackground(conversationId, red.memory, getModel);
       
       // Trigger background title generation (non-blocking)
-      background.generateTitleInBackground(conversationId, messageCount, red, red.chatModel);
+      background.generateTitleInBackground(conversationId, messageCount, red, userId || '', defaultNeuronId);
       
       // Trigger executive summary generation after 3rd+ message (non-blocking)
       if (messageCount >= 3) {
-        background.generateExecutiveSummaryInBackground(conversationId, red.memory, red.chatModel);
+        background.generateExecutiveSummaryInBackground(conversationId, red.memory, getModel);
       }
     }
     

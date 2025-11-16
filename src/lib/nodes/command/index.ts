@@ -11,13 +11,11 @@
  */
 
 import { SystemMessage } from '@langchain/core/messages';
-import type { Red } from '../../..';
 import { createIntegratedPublisher } from '../../events/integrated-publisher';
 import { getNodeSystemPrefix } from '../../utils/node-helpers';
 
 interface CommandNodeState {
   query: { message: string };
-  redInstance: Red;
   options?: {
     conversationId?: string;
     generationId?: string;
@@ -26,6 +24,10 @@ interface CommandNodeState {
   toolParam?: string; // Command to execute
   contextMessages?: any[]; // Pre-loaded context from router
   nodeNumber?: number; // Current node position in graph
+  // Phase 0: Infrastructure components
+  logger?: any;
+  messageQueue?: any;
+  mcpClient?: any;
 }
 
 /**
@@ -33,7 +35,6 @@ interface CommandNodeState {
  */
 export async function commandNode(state: CommandNodeState): Promise<Partial<any>> {
   const startTime = Date.now();
-  const redInstance: Red = state.redInstance;
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   const messageId = state.messageId;
@@ -61,7 +62,7 @@ export async function commandNode(state: CommandNodeState): Promise<Partial<any>
     // ==========================================
     // STEP 1: Start & Log
     // ==========================================
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'tool',
       message: `⚙️ Starting command execution via MCP`,
@@ -91,7 +92,7 @@ export async function commandNode(state: CommandNodeState): Promise<Partial<any>
       });
     }
 
-    const commandResult = await redInstance.callMcpTool('execute_command', {
+    const commandResult = await state.mcpClient.callTool('execute_command', {
       command: command
     }, {
       conversationId,
@@ -103,7 +104,7 @@ export async function commandNode(state: CommandNodeState): Promise<Partial<any>
     if (commandResult.isError) {
       const errorText = commandResult.content[0]?.text || 'Command execution failed';
       
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'warn',
         category: 'tool',
         message: `🛡️ Command failed: ${errorText.substring(0, 200)}`,
@@ -134,7 +135,7 @@ export async function commandNode(state: CommandNodeState): Promise<Partial<any>
     const resultText = commandResult.content[0]?.text || 'Command completed with no output';
     const duration = Date.now() - startTime;
 
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'success',
       category: 'tool',
       message: `✓ Command completed via MCP in ${(duration / 1000).toFixed(1)}s`,
@@ -202,7 +203,7 @@ CRITICAL RULES:
     const errorMessage = error instanceof Error ? error.message : String(error);
     const duration = Date.now() - startTime;
     
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'error',
       category: 'tool',
       message: `✗ Command execution failed: ${errorMessage}`,

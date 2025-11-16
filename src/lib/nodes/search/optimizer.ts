@@ -13,7 +13,7 @@ import { getNodeSystemPrefix } from '../../utils/node-helpers';
  */
 export async function optimizeSearchQuery(
   originalQuery: string,
-  redInstance: Red,
+  state: any, // Graph state with neuronRegistry, userId, defaultNeuronId
   conversationId?: string,
   generationId?: string,
   nodeNumber: number = 2
@@ -25,7 +25,9 @@ export async function optimizeSearchQuery(
     day: 'numeric' 
   });
   
-  const response = await invokeWithRetry(redInstance.chatModel, [
+  const neuronId = state.defaultNeuronId || 'red-neuron';
+  const model = await state.neuronRegistry.getModel(neuronId, state.userId);
+  const response = await invokeWithRetry(model, [
     {
       role: 'system',
       content: `${getNodeSystemPrefix(nodeNumber, 'Search Query Optimizer')}
@@ -42,13 +44,13 @@ Return ONLY the optimized search query, nothing else.`
       role: 'user',
       content: originalQuery
     }
-  ], { context: 'search query optimization' });
+  ], { context: 'search query optimization' }) as any;
   
   const { thinking, cleanedContent } = extractThinking(response.content.toString());
   
   // Log optimization thinking if present
   if (thinking && generationId && conversationId) {
-    await redInstance.logger.logThought({
+    await state.logger.logThought({
       content: thinking,
       source: 'search-query-optimization',
       generationId,
@@ -68,7 +70,7 @@ Return ONLY the optimized search query, nothing else.`
 export async function summarizeSearchResults(
   originalQuery: string,
   searchResults: string,
-  redInstance: Red,
+  state: any, // Graph state with neuronRegistry, userId, defaultNeuronId
   conversationId?: string,
   generationId?: string,
   nodeNumber: number = 2
@@ -80,7 +82,9 @@ export async function summarizeSearchResults(
     day: 'numeric' 
   });
   
-  const response = await invokeWithRetry(redInstance.chatModel, [
+  const neuronId = state.defaultNeuronId || 'red-neuron';
+  const model = await state.neuronRegistry.getModel(neuronId, state.userId);
+  const response = await invokeWithRetry(model, [
     {
       role: 'system',
       content: `${getNodeSystemPrefix(nodeNumber, 'Search Result Summarizer')}
@@ -91,13 +95,13 @@ You are an information extraction expert. Extract key facts and data to answer t
       role: 'user',
       content: `User Query: ${originalQuery}\n\nSearch Results:\n${searchResults}\n\nExtract and summarize the key information that answers this query. Start directly with the facts - do NOT repeat the query:`
     }
-  ], { context: 'search result summarization' });
+  ], { context: 'search result summarization' }) as any;
 
   const { thinking, cleanedContent } = extractThinking(response.content.toString());
   
   // Log extraction thinking if present
   if (thinking && generationId && conversationId) {
-    await redInstance.logger.logThought({
+    await state.logger.logThought({
       content: thinking,
       source: 'search-result-extraction',
       generationId,

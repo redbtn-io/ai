@@ -1,17 +1,18 @@
-import { InvokeOptions, Red } from '../..';
+import { InvokeOptions } from '../..';
 
 interface ContextNodeState {
-  redInstance: Red;
   options?: InvokeOptions;
   messageId?: string;
   nodeNumber?: number;
   contextMessages?: any[];
   contextSummary?: string;
   contextLoaded?: boolean;
+  // Phase 0: Infrastructure components
+  logger?: any;
+  mcpClient?: any;
 }
 
 export const contextNode = async (state: ContextNodeState) => {
-  const redInstance = state.redInstance;
   const options = state.options || {};
   const conversationId = options.conversationId;
   const generationId = options.generationId;
@@ -30,7 +31,7 @@ export const contextNode = async (state: ContextNodeState) => {
   let contextMessages: any[] = [];
   let contextSummary = '';
 
-  await redInstance.logger.log({
+  await state.logger.log({
     level: 'info',
     category: 'context',
     message: `<cyan>🧱 Loading conversation context</cyan>`,
@@ -39,7 +40,7 @@ export const contextNode = async (state: ContextNodeState) => {
   });
 
   try {
-    const contextResult = await redInstance.callMcpTool(
+    const contextResult = await state.mcpClient.callTool(
       'get_context_history',
       {
         conversationId,
@@ -71,7 +72,7 @@ export const contextNode = async (state: ContextNodeState) => {
 
       const removed = rawMessages.length - contextMessages.length;
       if (removed > 0) {
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'debug',
           category: 'context',
           message: `<yellow>⚠ Removed ${removed} duplicate context messages</yellow>`,
@@ -85,7 +86,7 @@ export const contextNode = async (state: ContextNodeState) => {
   }
 
   try {
-    const summaryResult = await redInstance.callMcpTool(
+    const summaryResult = await state.mcpClient.callTool(
       'get_summary',
       {
         conversationId,

@@ -1,5 +1,3 @@
-import { Red } from '../..';
-
 /**
  * Precheck Node - Fast pattern matching for unambiguous commands
  * 
@@ -44,12 +42,12 @@ export interface PatternMatch {
 /**
  * Load command patterns from all MCP servers
  */
-export async function loadPatterns(redInstance: Red): Promise<CommandPattern[]> {
+export async function loadPatterns(mcpClient: any, logger: any): Promise<CommandPattern[]> {
   const allPatterns: CommandPattern[] = [];
   
   try {
     // Query each MCP server for pattern resources
-    const registry = redInstance.mcpRegistry;
+    const registry = mcpClient;
     const serverNames = registry.getAllServerNames();
     
     for (const serverName of serverNames) {
@@ -84,14 +82,14 @@ export async function loadPatterns(redInstance: Red): Promise<CommandPattern[]> 
               });
             }
             
-            await redInstance.logger.log({
+            await logger.log({
               level: 'info',
               category: 'precheck',
               message: `📦 Loaded ${patterns.length} patterns from ${serverName}`,
               metadata: { server: serverName, resourceUri: resource.uri }
             });
           } catch (error) {
-            await redInstance.logger.log({
+            await logger.log({
               level: 'warn',
               category: 'precheck',
               message: `Failed to load pattern resource: ${resource.uri}`,
@@ -100,7 +98,7 @@ export async function loadPatterns(redInstance: Red): Promise<CommandPattern[]> 
           }
         }
       } catch (error) {
-        await redInstance.logger.log({
+        await logger.log({
           level: 'warn',
           category: 'precheck',
           message: `Failed to query patterns from ${serverName}`,
@@ -109,7 +107,7 @@ export async function loadPatterns(redInstance: Red): Promise<CommandPattern[]> 
       }
     }
     
-    await redInstance.logger.log({
+    await logger.log({
       level: 'info',
       category: 'precheck',
       message: `✅ Loaded ${allPatterns.length} total command patterns`,
@@ -117,7 +115,7 @@ export async function loadPatterns(redInstance: Red): Promise<CommandPattern[]> 
     });
     
   } catch (error) {
-    await redInstance.logger.log({
+    await logger.log({
       level: 'error',
       category: 'precheck',
       message: `Failed to load patterns: ${error}`,
@@ -179,7 +177,6 @@ export function matchPattern(input: string, patterns: CommandPattern[]): Pattern
  * Precheck Node - Pattern matching before LLM routing
  */
 export const precheckNode = async (state: any) => {
-  const redInstance: Red = state.redInstance;
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   
@@ -198,7 +195,7 @@ export const precheckNode = async (state: any) => {
     };
   }
   
-  await redInstance.logger.log({
+  await state.logger.log({
     level: 'info',
     category: 'precheck',
     message: `🔍 Precheck: Checking for pattern matches...`,
@@ -208,10 +205,10 @@ export const precheckNode = async (state: any) => {
   });
   
   // Load patterns (in production, cache these)
-  const patterns = await loadPatterns(redInstance);
+  const patterns = await loadPatterns(state.mcpClient, state.logger);
   
   if (patterns.length === 0) {
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'precheck',
       message: '📋 No patterns loaded, routing to LLM',
@@ -230,7 +227,7 @@ export const precheckNode = async (state: any) => {
   
   if (match && match.confidence >= 0.8) {
     // High confidence match - use fast path!
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'precheck',
       message: `⚡ FAST PATH: Matched pattern "${match.pattern.id}" (confidence: ${match.confidence})`,
@@ -257,7 +254,7 @@ export const precheckNode = async (state: any) => {
   }
   
   // No match or low confidence - route to LLM
-  await redInstance.logger.log({
+  await state.logger.log({
     level: 'info',
     category: 'precheck',
     message: match 

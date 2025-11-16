@@ -1,5 +1,3 @@
-import { Red } from '../..';
-
 /**
  * Fast Path Command Executor (PLACEHOLDER)
  * 
@@ -15,7 +13,6 @@ import { Red } from '../..';
  */
 
 export const fastpathExecutorNode = async (state: any) => {
-  const redInstance: Red = state.redInstance;
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   
@@ -24,7 +21,7 @@ export const fastpathExecutorNode = async (state: any) => {
   const server = state.fastpathServer;
   const parameters = state.fastpathParameters;
   
-  await redInstance.logger.log({
+  await state.logger.log({
     level: 'info',
     category: 'fastpath',
     message: `⚡ FASTPATH (placeholder): Pattern matched but executor not implemented yet`,

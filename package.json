@@ -16,14 +16,13 @@
     "start:server": "cd examples/rest-server && npm start",
     "build": "tsc",
     "pack": "npm run build && npm pack",
-    "prepublishOnly": "npm run build",
-    "db:fix-messageids": "npx tsx scripts/fix-null-messageids.ts",
-    "redis:cleanup-dupes": "npx tsx scripts/cleanup-redis-duplicates.ts"
+    "prepublishOnly": "npm run build"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@chroma-core/default-embed": "^0.1.8",
+    "@langchain/anthropic": "^1.0.1",
     "@langchain/core": "^0.3.78",
     "@langchain/google-genai": "^0.2.18",
     "@langchain/langgraph": "^0.4.9",
@@ -35,7 +34,9 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "ioredis": "^5.8.0",
+    "lru-cache": "^11.0.4",
     "mongodb": "^6.20.0",
+    "mongoose": "^8.10.6",
     "tiktoken": "^1.0.22",
     "zod": "^3.25.76"
   },

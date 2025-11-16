@@ -6,15 +6,11 @@
 // Load environment variables from .env early for library modules
 import 'dotenv/config';
 
-import { ChatOllama } from "@langchain/ollama";
-import { ChatOpenAI } from "@langchain/openai";
-import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-
 import { redGraph } from "./lib/graphs/red";
 import { MemoryManager } from "./lib/memory/memory";
 import { MessageQueue } from "./lib/memory/queue";
 import { PersistentLogger } from "./lib/logs/persistent-logger";
-import { createGeminiModel, createChatModel, createWorkerModel, createOpenAIModel } from "./lib/models";
+import { NeuronRegistry } from "./lib/neurons/NeuronRegistry";
 import * as background from "./functions/background";
 import { respond as respondFunction } from "./functions/respond";
 import { McpRegistry } from "./lib/mcp/registry";
@@ -68,6 +64,16 @@ export {
   ServerRegistration,
 } from "./lib/mcp";
 
+// Export Neuron system components
+export {
+  NeuronRegistry,
+  NeuronNotFoundError,
+  NeuronAccessDeniedError,
+  NeuronProviderError
+} from "./lib/neurons/NeuronRegistry";
+export { NeuronConfig, NeuronDocument, NeuronProvider, NeuronRole } from "./lib/types/neuron";
+export { default as Neuron } from "./lib/models/Neuron";
+
 // --- Type Definitions ---
 
 /**
@@ -112,11 +118,8 @@ export class Red {
   private nodeId?: string;
   private heartbeatInterval?: NodeJS.Timeout;
 
-  // Properties to hold the configured model instances
-  public chatModel!: ChatOllama; // Primary chat interaction model
-  public workerModel!: ChatOllama; // Background tasks and tool execution model
-  public openAIModel?: ChatOpenAI;
-  public geminiModel?: ChatGoogleGenerativeAI;
+  // Properties to hold configured services
+  public neuronRegistry!: NeuronRegistry;
   public memory!: MemoryManager;
   public messageQueue!: MessageQueue;
   public logger!: PersistentLogger;
@@ -130,11 +133,8 @@ export class Red {
   constructor(config: RedConfig) {
     this.config = config;
 
-    // Initialize the model instances
-    this.chatModel = createChatModel(config);
-    this.workerModel = createWorkerModel(config);
-    this.openAIModel = createOpenAIModel();
-    this.geminiModel = createGeminiModel();
+    // Initialize neuron registry (dynamic model loading)
+    this.neuronRegistry = new NeuronRegistry(config);
     
     // Initialize memory manager
     this.memory = new MemoryManager(config.redisUrl);
@@ -199,6 +199,9 @@ export class Red {
     }
 
     process.stdout.write(`\rLoading node: ${this.nodeId}...`);
+    
+    // Initialize neuron registry (connect to MongoDB)
+    await this.neuronRegistry.initialize();
     
     // TODO: Implement the actual state fetching logic from Redis using `this.config.redisUrl`.
     // The `nodeId` can be used to fetch a specific state for recovery or distributed operation.

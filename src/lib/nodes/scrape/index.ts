@@ -11,14 +11,12 @@
  */
 
 import { SystemMessage } from '@langchain/core/messages';
-import type { Red } from '../../..';
 import { createIntegratedPublisher } from '../../events/integrated-publisher';
 import { validateUrl, ValidationError } from './validator';
 import { getNodeSystemPrefix } from '../../utils/node-helpers';
 
 interface ScrapeNodeState {
   query: { message: string };
-  redInstance: Red;
   options?: {
     conversationId?: string;
     generationId?: string;
@@ -27,6 +25,10 @@ interface ScrapeNodeState {
   toolParam?: string; // URL to scrape
   contextMessages?: any[]; // Pre-loaded context from router
   nodeNumber?: number; // Current node position in graph
+  // Phase 0: Infrastructure components
+  logger?: any;
+  messageQueue?: any;
+  mcpClient?: any;
 }
 
 /**
@@ -34,7 +36,6 @@ interface ScrapeNodeState {
  */
 export async function scrapeNode(state: ScrapeNodeState): Promise<Partial<any>> {
   const startTime = Date.now();
-  const redInstance: Red = state.redInstance;
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   const messageId = state.messageId;
@@ -62,7 +63,7 @@ export async function scrapeNode(state: ScrapeNodeState): Promise<Partial<any>> 
     // ==========================================
     // STEP 1: Start & Log
     // ==========================================
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'tool',
       message: `📄 Starting URL scrape via MCP`,
@@ -94,7 +95,7 @@ export async function scrapeNode(state: ScrapeNodeState): Promise<Partial<any>> 
       validatedUrl = validateUrl(urlToScrape);
     } catch (error) {
       if (error instanceof ValidationError) {
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'error',
           category: 'tool',
           message: `✗ Invalid URL: ${error.message}`,
@@ -121,7 +122,7 @@ export async function scrapeNode(state: ScrapeNodeState): Promise<Partial<any>> 
       throw error;
     }
 
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'tool',
       message: `✓ URL validated: ${validatedUrl.hostname}`,
@@ -143,7 +144,7 @@ export async function scrapeNode(state: ScrapeNodeState): Promise<Partial<any>> 
       });
     }
 
-    const scrapeResult = await redInstance.callMcpTool('scrape_url', {
+    const scrapeResult = await state.mcpClient.callTool('scrape_url', {
       url: validatedUrl.toString()
     }, {
       conversationId,
@@ -159,7 +160,7 @@ export async function scrapeNode(state: ScrapeNodeState): Promise<Partial<any>> 
     const scrapedContent = scrapeResult.content[0]?.text || '';
 
     if (!scrapedContent || scrapedContent.includes('No content could be extracted')) {
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'warn',
         category: 'tool',
         message: `⚠️ No content extracted from URL`,
@@ -188,7 +189,7 @@ export async function scrapeNode(state: ScrapeNodeState): Promise<Partial<any>> 
 
     const duration = Date.now() - startTime;
 
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'success',
       category: 'tool',
       message: `✓ URL scrape completed via MCP in ${(duration / 1000).toFixed(1)}s`,
@@ -257,7 +258,7 @@ CRITICAL RULES:
     const errorMessage = error instanceof Error ? error.message : String(error);
     const duration = Date.now() - startTime;
     
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'error',
       category: 'tool',
       message: `✗ URL scrape failed: ${errorMessage}`,

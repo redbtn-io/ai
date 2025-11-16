@@ -25,7 +25,6 @@ export interface ClassifierDecision {
 }
 
 export const classifierNode = async (state: any) => {
-  const redInstance: Red = state.redInstance;
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   
@@ -44,7 +43,7 @@ export const classifierNode = async (state: any) => {
     };
   }
   
-  await redInstance.logger.log({
+  await state.logger.log({
     level: 'info',
     category: 'classifier',
     message: `🤔 Classifier: Routing query...`,
@@ -103,7 +102,8 @@ Respond with JSON:
 
   try {
     // Use fast worker model for classification
-    const model = redInstance.workerModel;
+    const neuronId = state.defaultWorkerNeuronId || 'red-neuron';
+    const model = await state.neuronRegistry.getModel(neuronId, state.userId);
     
     // Get node number from state or default to 1 (classifier is typically first after precheck)
     const nodeNumber = state.nodeNumber || 1;
@@ -131,7 +131,7 @@ Respond only with valid JSON.`;
     
     const decision: ClassifierDecision = jsonMatch;
     
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'classifier',
       message: `📊 Decision: ${decision.decision.toUpperCase()} (confidence: ${decision.confidence})`,
@@ -146,7 +146,7 @@ Respond only with valid JSON.`;
     
     // Log low confidence but still use the decision (LLM knows best)
     if (decision.confidence < 0.6) {
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'warn',
         category: 'classifier',
         message: `⚠️ Low confidence (${decision.confidence}) but proceeding with: ${decision.decision.toUpperCase()}`,
@@ -162,7 +162,7 @@ Respond only with valid JSON.`;
     };
     
   } catch (error) {
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'error',
       category: 'classifier',
       message: `❌ Classification failed: ${error}`,

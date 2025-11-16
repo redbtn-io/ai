@@ -18,7 +18,18 @@ import { getNodeSystemPrefix } from '../../utils/node-helpers';
 
 interface SearchNodeState {
   query: { message: string };
-  redInstance: Red;
+  // Phase 0: Per-user context
+  userId: string;
+  accountTier: number;
+  neuronRegistry: any;
+  defaultNeuronId: string;
+  defaultWorkerNeuronId: string;
+  // Infrastructure
+  memory: any;
+  messageQueue: any;
+  logger: any;
+  mcpClient: any;
+  // Node-specific
   options?: {
     conversationId?: string;
     generationId?: string;
@@ -38,7 +49,6 @@ const MAX_SEARCH_ITERATIONS = 5;
  */
 export async function searchNode(state: SearchNodeState): Promise<Partial<any>> {
   const startTime = Date.now();
-  const redInstance: Red = state.redInstance;
   const userQuery = state.toolParam || state.query?.message || '';
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
@@ -56,7 +66,7 @@ export async function searchNode(state: SearchNodeState): Promise<Partial<any>> 
   // Disabled: registry publishes events automatically
   // if (redInstance?.messageQueue && messageId && conversationId) {
   //   publisher = createIntegratedPublisher(
-  //     redInstance.messageQueue,
+  //     state.messageQueue,
   //     'search',
   //     'Web Search',
   //     messageId,
@@ -105,7 +115,7 @@ export async function searchNode(state: SearchNodeState): Promise<Partial<any>> 
     // ==========================================
     // STEP 1: Start & Log
     // ==========================================
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'tool',
       message: `🔍 Starting web search via MCP`,
@@ -131,7 +141,7 @@ export async function searchNode(state: SearchNodeState): Promise<Partial<any>> 
     // ==========================================
     const searchQuery = state.toolParam || userQuery;
     
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'tool',
       message: `� Searching for: "${searchQuery}"`,
@@ -146,7 +156,7 @@ export async function searchNode(state: SearchNodeState): Promise<Partial<any>> 
       });
     }
 
-    const searchResult = await redInstance.callMcpTool('web_search', {
+    const searchResult = await state.mcpClient.callTool('web_search', {
       query: searchQuery,
       count: maxResults
     }, {
@@ -163,7 +173,7 @@ export async function searchNode(state: SearchNodeState): Promise<Partial<any>> 
     const searchResultText = searchResult.content[0]?.text || '';
 
     if (!searchResultText || searchResultText.includes('No results found')) {
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'warn',
         category: 'tool',
         message: `⚠️ No search results found`,
@@ -214,7 +224,7 @@ The user asked about something but the search returned no results. Let them know
 
     const duration = Date.now() - startTime;
 
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'success',
       category: 'tool',
       message: `✓ Web search completed via MCP in ${(duration / 1000).toFixed(1)}s`,
@@ -329,9 +339,11 @@ Be practical: If results provide ANY useful information, consider it sufficient.
     let evaluation: { sufficient: boolean; reasoning: string; newSearchQuery?: string };
     
     try {
-      const evalResponse = await invokeWithRetry(redInstance.workerModel, evaluationMessages, {
+      const neuronId = state.defaultWorkerNeuronId || 'red-neuron';
+      const model = await state.neuronRegistry.getModel(neuronId, state.userId);
+      const evalResponse = await invokeWithRetry(model, evaluationMessages, {
         context: 'search result evaluation',
-      });
+      }) as any;
       const evalContent = typeof evalResponse.content === 'string' 
         ? evalResponse.content 
         : JSON.stringify(evalResponse.content);
@@ -344,7 +356,7 @@ Be practical: If results provide ANY useful information, consider it sufficient.
       
       evaluation = JSON.parse(jsonMatch[0]);
       
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'info',
         category: 'node',
         message: `Search evaluation (iteration ${currentIteration + 1}): ${evaluation.sufficient ? 'SUFFICIENT' : 'INSUFFICIENT'}`,
@@ -360,7 +372,7 @@ Be practical: If results provide ANY useful information, consider it sufficient.
 
     } catch (error) {
       // If evaluation fails, assume sufficient and continue
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'warning',
         category: 'node',
         message: `Search evaluation failed, assuming sufficient: ${error}`,
@@ -384,7 +396,7 @@ Be practical: If results provide ANY useful information, consider it sufficient.
     const currentStepIndex = (state as any).currentStepIndex || 0;
     const usingPlanner = executionPlan && executionPlan.steps;
     
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'info',
       category: 'search',
       message: `🔍 Search decision point - sufficient: ${evaluation.sufficient}, usingPlanner: ${!!usingPlanner}, currentStepIndex: ${currentStepIndex}, iteration: ${currentIteration + 1}`,
@@ -408,7 +420,7 @@ Be practical: If results provide ANY useful information, consider it sufficient.
       
       if (usingPlanner) {
         // Advance to next step in execution plan
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'info',
           category: 'search',
           message: `✅ PLANNER MODE: Advancing to next step (${currentStepIndex} → ${currentStepIndex + 1})`,
@@ -425,7 +437,7 @@ Be practical: If results provide ANY useful information, consider it sufficient.
         };
       } else {
         // Legacy router mode - go to responder
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'info',
           category: 'search',
           message: `✅ ROUTER MODE: Going to responder`,
@@ -463,7 +475,7 @@ Be practical: If results provide ANY useful information, consider it sufficient.
           ...updatedPlan.steps.slice(currentStepIndex + 1)
         ];
         
-        await redInstance.logger.log({
+        await state.logger.log({
           level: 'info',
           category: 'search',
           message: `<yellow>🔄 Injecting additional search step into plan</yellow>`,
@@ -521,7 +533,7 @@ Be practical: If results provide ANY useful information, consider it sufficient.
     const errorMessage = error instanceof Error ? error.message : String(error);
     const duration = Date.now() - startTime;
     
-    await redInstance.logger.log({
+    await state.logger.log({
       level: 'error',
       category: 'tool',
       message: `✗ Web search failed: ${errorMessage}`,

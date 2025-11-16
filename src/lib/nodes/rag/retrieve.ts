@@ -54,7 +54,7 @@ interface RetrieveFromVectorStoreState {
   // Standard graph state
   query?: { message: string };
   options?: InvokeOptions;
-  redInstance?: any;
+  logger?: any;
   messages?: any[];
   systemMessage?: string;
 }
@@ -226,7 +226,7 @@ function formatContextForLLM(results: SearchResult[], query: string, mergeChunks
 export const retrieveFromVectorStoreNode = async (
   state: RetrieveFromVectorStoreState
 ): Promise<Partial<RetrieveFromVectorStoreState>> => {
-  const redInstance = state.redInstance;
+  
   const options = state.options || {};
   const generationId = options.generationId;
   const conversationId = options.conversationId;
@@ -245,8 +245,8 @@ export const retrieveFromVectorStoreNode = async (
     const shouldMergeChunks = state.ragMergeChunks !== false; // Default: true
 
     // Log operation start
-    if (redInstance?.logger) {
-      await redInstance.logger.log({
+    if (state.logger) {
+      await state.logger.log({
         level: 'info',
         category: 'rag',
         message: `<cyan>🔍 Retrieving context from vector store...</cyan>`,
@@ -260,9 +260,10 @@ export const retrieveFromVectorStoreNode = async (
     }
 
     // Initialize vector store manager
+    // TODO Phase 1: Get URLs from state instead of process.env
     const vectorStore = new VectorStoreManager(
-      redInstance?.config?.vectorDbUrl || process.env.CHROMA_URL || 'http://localhost:8024',
-      redInstance?.config?.chatLlmUrl || process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+      process.env.CHROMA_URL || 'http://localhost:8024',
+      process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
     );
 
     // Health check
@@ -292,7 +293,7 @@ export const retrieveFromVectorStoreNode = async (
     }
 
     // Log results
-    if (redInstance?.logger) {
+    if (state.logger) {
       const avgScore = results.length > 0
         ? (results.reduce((sum, r) => sum + r.score, 0) / results.length * 100).toFixed(1)
         : 0;
@@ -301,7 +302,7 @@ export const retrieveFromVectorStoreNode = async (
         ? ` <dim>(${results.length} chunks → ${mergedCount} merged documents)</dim>`
         : '';
 
-      await redInstance.logger.log({
+      await state.logger.log({
         level: 'success',
         category: 'rag',
         message: `<green>✓ Retrieved ${results.length} relevant chunk(s)</green>${mergeInfo} <dim>(avg relevance: ${avgScore}%)</dim>`,
@@ -342,8 +343,8 @@ export const retrieveFromVectorStoreNode = async (
     const errorMessage = error instanceof Error ? error.message : String(error);
     
     // Log error
-    if (redInstance?.logger) {
-      await redInstance.logger.log({
+    if (state.logger) {
+      await state.logger.log({
         level: 'error',
         category: 'rag',
         message: `<red>✗ Failed to retrieve from vector store:</red> ${errorMessage}`,
