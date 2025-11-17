@@ -16,7 +16,11 @@
     "start:server": "cd examples/rest-server && npm start",
     "build": "tsc",
     "pack": "npm run build && npm pack",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "db:seed-neurons": "npx tsx scripts/seed-default-neurons.ts",
+    "db:update-user-defaults": "npx tsx scripts/update-user-defaults.ts",
+    "db:seed-graphs": "npx tsx scripts/seed-default-graphs.ts",
+    "db:update-user-graphs": "npx tsx scripts/update-user-graph-defaults.ts"
   },
   "author": "",
   "license": "ISC",

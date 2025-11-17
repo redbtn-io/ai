@@ -268,19 +268,10 @@ export class NeuronRegistry {
    * @returns AccountLevel number (0=ADMIN, 1=ENTERPRISE, 2=PRO, 3=BASIC, 4=FREE)
    */
   private async getUserTier(userId: string): Promise<number> {
-    // TODO: Clean this up - cross-package model access is technical debt
-    // For now, use require() with path traversal
-    try {
-      const User = require('../../../webapp/src/lib/database/models/auth/User').default;
-      const user = await User.findById(userId);
-      if (!user) {
-        return 4; // Default to FREE tier
-      }
-      return user.accountLevel;
-    } catch (error) {
-      console.error('[NeuronRegistry] Error loading user tier:', error);
-      return 4; // Fail-safe: FREE tier
-    }
+    // TODO: Implement proper tier lookup via API or shared database manager
+    // For Phase 1, default to FREE tier (allows system neurons only)
+    // Phase 2 will integrate with User model for proper tier-based neuron access
+    return 4; // FREE tier - grants access to system neurons
   }
   
   /**

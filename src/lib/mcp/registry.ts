@@ -163,6 +163,12 @@ export class McpRegistry {
     }
 
     console.log(`[Registry] Calling tool: ${toolName} on server: ${found.server}, role: ${args.role}`);
+    
+    // DEBUG: Log userId for store_message
+    if (toolName === 'store_message') {
+      console.log(`[Registry] store_message args.userId:`, args.userId);
+    }
+    
     const client = this.clients.get(found.server);
     
     if (!client) {

@@ -29,12 +29,13 @@ export class ContextServerSSE extends McpServerSSE {
         type: 'object',
         properties: {
           conversationId: { type: 'string' },
+          userId: { type: 'string' },
           role: { type: 'string', enum: ['user', 'assistant', 'system'] },
           content: { type: 'string' },
           messageId: { type: 'string' },
           timestamp: { type: 'number' }
         },
-        required: ['conversationId', 'role', 'content']
+        required: ['conversationId', 'userId', 'role', 'content']
       }
     });
 
@@ -116,7 +117,8 @@ export class ContextServerSSE extends McpServerSSE {
               content: args.content as string,
               timestamp: args.timestamp as number || Date.now(),
               toolExecutions: args.toolExecutions as any[] || []
-            }
+            },
+            args.userId as string  // Pass userId as 3rd parameter
           );
           return {
             content: [{ type: 'text', text: JSON.stringify({ success: true }) }]

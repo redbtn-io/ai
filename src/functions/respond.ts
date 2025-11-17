@@ -30,28 +30,46 @@ export async function respond(
     throw new Error('[Respond] userId is required in options for per-user model loading (Phase 0)');
   }
   
-  // Phase 0: Load user from database to get account tier and default neurons
-  let accountTier = 4; // Default to FREE
+  // Phase 0/1: Load user settings from MongoDB (account tier, default neurons, default graph)
+  let accountTier = 4; // Default to FREE tier
   let defaultNeuronId = 'red-neuron';
   let defaultWorkerNeuronId = 'red-neuron';
+  let defaultGraphId = 'red-graph-default'; // Phase 1: Default graph ID
   
   try {
-    // Load user model (cross-package access - technical debt, will clean up in Phase 1)
-    const User = require('../../webapp/src/lib/database/models/auth/User').default;
-    const user = await User.findById(userId);
+    // Load user settings from MongoDB (Mongoose is already connected via database.ts)
+    const mongoose = require('mongoose');
     
+    // Define minimal User schema (just for reading settings)
+    // Use strict: false to allow reading all fields from database
+    let User;
+    try {
+      User = mongoose.model('User');
+    } catch {
+      const userSchema = new mongoose.Schema({}, { 
+        collection: 'users',
+        strict: false  // Allow reading any fields from DB
+      });
+      User = mongoose.model('User', userSchema);
+    }
+    
+    const user = await User.findById(userId).lean(); // Use .lean() to get plain object
     if (user) {
-      accountTier = user.accountLevel;
+      accountTier = user.accountLevel ?? 4;
       defaultNeuronId = user.defaultNeuronId || 'red-neuron';
       defaultWorkerNeuronId = user.defaultWorkerNeuronId || 'red-neuron';
-      console.log(`[Respond] User ${userId} - Tier: ${accountTier}, Default Neuron: ${defaultNeuronId}`);
+      defaultGraphId = user.defaultGraphId || 'red-graph-default';
+      console.log(`[Respond] Loaded user settings - Tier: ${accountTier}, Graph: ${defaultGraphId}, Neuron: ${defaultNeuronId}`);
     } else {
-      console.warn(`[Respond] User ${userId} not found in database, using FREE tier defaults`);
+      console.warn(`[Respond] User ${userId} not found, using FREE tier defaults`);
     }
   } catch (error) {
-    console.error('[Respond] Error loading user from database:', error);
+    console.error('[Respond] Error loading user settings:', error);
     console.warn('[Respond] Falling back to FREE tier defaults');
   }
+  
+  // Phase 1: Determine which graph to use (options override user default)
+  const graphId = options.graphId || defaultGraphId;
   
   // Generate conversation ID if not provided (use memory directly for ID generation since it's a simple utility)
   const conversationId = options.conversationId || red.memory.generateConversationId(query.message);
@@ -64,7 +82,38 @@ export async function respond(
   const userMessageId = options.userMessageId || `msg_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   const assistantMessageId = `msg_${Date.now() + 1}_${Math.random().toString(36).substring(7)}`;
   
-  console.log(`[Respond] Starting respond() - conversationId:${conversationId}, requestId:${requestId}, userMessageId:${userMessageId}, userId:${userId}, tier:${accountTier}, query:${query.message.substring(0, 50)}`);
+  console.log(`[Respond] Starting respond() - conversationId:${conversationId}, requestId:${requestId}, userMessageId:${userMessageId}, userId:${userId}, tier:${accountTier}, graphId:${graphId}, query:${query.message.substring(0, 50)}`);
+  
+  // Phase 1: Load and compile the user's graph (with fallback on access denied)
+  let compiledGraph;
+  let actualGraphId = graphId;
+  
+  try {
+    compiledGraph = await red.graphRegistry.getGraph(graphId, userId);
+    console.log(`[Respond] Using graph: ${graphId} (compiled at ${compiledGraph.compiledAt.toISOString()})`);
+  } catch (error: any) {
+    // Check if this is a recoverable error (tier restriction or not found)
+    const isAccessDenied = error.name === 'GraphAccessDeniedError' || error.message?.includes('requires tier');
+    const isNotFound = error.name === 'GraphNotFoundError' || error.message?.includes('not found');
+    
+    if (isAccessDenied || isNotFound) {
+      const reason = isAccessDenied ? 'Access denied' : 'Graph not found';
+      console.warn(`[Respond] ${reason} for graph ${graphId}, falling back to red-graph-default`);
+      actualGraphId = 'red-graph-default';
+      
+      try {
+        compiledGraph = await red.graphRegistry.getGraph('red-graph-default', userId);
+        console.log(`[Respond] Using fallback graph: red-graph-default (compiled at ${compiledGraph.compiledAt.toISOString()})`);
+      } catch (fallbackError) {
+        console.error(`[Respond] Failed to load fallback graph:`, fallbackError);
+        throw new Error(`Failed to load graph '${graphId}' and fallback failed: ${fallbackError}`);
+      }
+    } else {
+      // Other errors (compilation failed, database error, etc.)
+      console.error(`[Respond] Failed to load graph ${graphId}:`, error);
+      throw new Error(`Failed to load graph '${graphId}': ${error}`);
+    }
+  }
   
   // Start a new generation (will fail if one is already in progress)
   const generationId = await red.logger.startGeneration(conversationId);
@@ -96,6 +145,7 @@ export async function respond(
   // Store user message via Context MCP
   await red.callMcpTool('store_message', {
     conversationId,
+    userId,
     role: 'user',
     content: query.message,
     messageId: userMessageId, // Use unique user message ID
@@ -142,11 +192,11 @@ CRITICAL RULES:
 
   // Check if streaming is requested
   if (options.stream) {
-    // Use LangGraph's streaming capabilities to stream through the graph
-    return streamThroughGraphWithMemory(red, initialState, conversationId, generationId, requestId, assistantMessageId, userId, defaultNeuronId);
+    // Phase 1: Use compiled graph for streaming
+    return streamThroughGraphWithMemory(red, compiledGraph, initialState, conversationId, generationId, requestId, assistantMessageId, userId, defaultNeuronId);
   } else {
-    // Invoke the graph and return the full AIMessage
-    const result = await redGraph.invoke(initialState);
+    // Phase 1: Invoke the compiled graph and return the full AIMessage
+    const result = await compiledGraph.graph.invoke(initialState);
     const response = result.response;
     
     // Retrieve tool executions from Redis state
@@ -208,6 +258,7 @@ CRITICAL RULES:
     // Store assistant response via Context MCP
     await red.callMcpTool('store_message', {
       conversationId,
+      userId,
       role: 'assistant',
       content: typeof response.content === 'string' ? response.content : JSON.stringify(response.content),
       messageId: assistantMessageId, // Use unique assistant message ID
@@ -248,6 +299,7 @@ CRITICAL RULES:
  */
 async function* streamThroughGraphWithMemory(
   red: Red,
+  compiledGraph: any, // Phase 1: CompiledGraph from GraphRegistry
   initialState: any,
   conversationId: string,
   generationId: string,
@@ -281,8 +333,8 @@ async function* streamThroughGraphWithMemory(
     // Note: Initial status is now published by the router node, not here
     // This prevents race conditions where "processing" overwrites "searching"
     
-    // Use LangGraph's streamEvents to get token-level streaming
-    const stream = redGraph.streamEvents(initialState, { version: "v1" });
+    // Phase 1: Use compiled graph's streamEvents to get token-level streaming
+    const stream = compiledGraph.graph.streamEvents(initialState, { version: "v1" });
     let finalMessage: any = null;
     let fullContent = '';
     let streamedTokens = false;
@@ -614,6 +666,7 @@ async function* streamThroughGraphWithMemory(
       // Store content via MCP for LLM context (already cleaned in streaming/non-streaming paths)
       await red.callMcpTool('store_message', {
         conversationId,
+        userId,
         role: 'assistant',
         content: fullContent,
         messageId: assistantMessageId, // Use unique assistant message ID

@@ -511,6 +511,9 @@ const redGraphBuilderWithRouter = new StateGraph(RedGraphState)
   .addEdge("command", "responder")
   .addEdge("responder", END);
 
+// Export RedGraphState for use in graph compiler (Phase 1)
+export { RedGraphState };
+
 // Export ROUTER graph with precheck+classifier as default
 export const redGraph = redGraphBuilderRouter.compile();
 

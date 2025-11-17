@@ -11,6 +11,7 @@ import { MemoryManager } from "./lib/memory/memory";
 import { MessageQueue } from "./lib/memory/queue";
 import { PersistentLogger } from "./lib/logs/persistent-logger";
 import { NeuronRegistry } from "./lib/neurons/NeuronRegistry";
+import { GraphRegistry } from "./lib/graphs/GraphRegistry";
 import * as background from "./functions/background";
 import { respond as respondFunction } from "./functions/respond";
 import { McpRegistry } from "./lib/mcp/registry";
@@ -74,6 +75,15 @@ export {
 export { NeuronConfig, NeuronDocument, NeuronProvider, NeuronRole } from "./lib/types/neuron";
 export { default as Neuron } from "./lib/models/Neuron";
 
+// Export Graph system components (Phase 1)
+export {
+  GraphRegistry,
+  GraphNotFoundError,
+  GraphAccessDeniedError
+} from "./lib/graphs/GraphRegistry";
+export { GraphConfig, GraphNodeConfig, GraphEdgeConfig, CompiledGraph, GraphNodeType } from "./lib/types/graph";
+export { Graph, GraphDocument } from "./lib/models/Graph";
+
 // --- Type Definitions ---
 
 /**
@@ -102,6 +112,8 @@ export interface InvokeOptions {
   generationId?: string; // Optional generation ID - will be auto-generated if not provided
   messageId?: string; // Optional message ID for Redis pub/sub streaming
   userMessageId?: string; // Optional user message ID from client request (stored in memory)
+  userId?: string; // Required for per-user model loading and conversation ownership
+  graphId?: string; // Phase 1: Optional graph ID to use (defaults to user's defaultGraphId)
 }
 
 // --- The Red Library Class ---
@@ -120,6 +132,7 @@ export class Red {
 
   // Properties to hold configured services
   public neuronRegistry!: NeuronRegistry;
+  public graphRegistry!: GraphRegistry; // Phase 1: Dynamic graph system
   public memory!: MemoryManager;
   public messageQueue!: MessageQueue;
   public logger!: PersistentLogger;
@@ -135,6 +148,9 @@ export class Red {
 
     // Initialize neuron registry (dynamic model loading)
     this.neuronRegistry = new NeuronRegistry(config);
+    
+    // Phase 1: Initialize graph registry (dynamic graph compilation)
+    this.graphRegistry = new GraphRegistry(config);
     
     // Initialize memory manager
     this.memory = new MemoryManager(config.redisUrl);
@@ -202,6 +218,9 @@ export class Red {
     
     // Initialize neuron registry (connect to MongoDB)
     await this.neuronRegistry.initialize();
+    
+    // Phase 1: Initialize graph registry (connect to MongoDB)
+    await this.graphRegistry.initialize();
     
     // TODO: Implement the actual state fetching logic from Redis using `this.config.redisUrl`.
     // The `nodeId` can be used to fetch a specific state for recovery or distributed operation.
@@ -342,6 +361,11 @@ export class Red {
     context?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<any> {
     const startTime = Date.now();
+    
+    // DEBUG: Log userId for store_message calls
+    if (toolName === 'store_message') {
+      console.log(`[RED.callMcpTool] store_message called with userId:`, args.userId, 'args:', Object.keys(args));
+    }
     
     // Log tool call start
     await this.logger.log({

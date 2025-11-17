@@ -186,6 +186,16 @@ class DatabaseManager {
       try {
         console.log('[Database] Connecting to MongoDB...');
         
+        // CRITICAL: Connect Mongoose first for Graph/Neuron models
+        // Check if Mongoose is already connected
+        const mongoose = require('mongoose');
+        if (mongoose.connection.readyState === 0) {
+          await mongoose.connect(this.mongoUrl, {
+            serverSelectionTimeoutMS: 5000,
+            connectTimeoutMS: 10000,
+          });
+        }
+        
         // Connection options
         const options = {
           authMechanism: undefined as string | undefined,
@@ -498,11 +508,11 @@ class DatabaseManager {
   /**
    * Store a message in the database
    */
-  async storeMessage(message: Omit<StoredMessage, '_id'>): Promise<ObjectId> {
+  async storeMessage(message: Omit<StoredMessage, '_id'>, userId?: string): Promise<ObjectId> {
     await this.ensureConnected();
     const messagesCol = this.getCollection<StoredMessage>(this.COLLECTIONS.MESSAGES);
     
-    console.log(`[Database] storeMessage called - messageId:${message.messageId}, role:${message.role}`);
+    console.log(`[Database] storeMessage called - messageId:${message.messageId}, role:${message.role}, userId:${userId}`);
     try {
       const result = await messagesCol.insertOne({
         ...message,
@@ -512,16 +522,28 @@ class DatabaseManager {
       
       console.log(`[Database] Message stored successfully - messageId:${message.messageId}, _id:${result.insertedId}`);
       
-      // Update conversation's updatedAt timestamp
+      // Update conversation's updatedAt timestamp and set userId
       const conversationsCol = this.getCollection<Conversation>(this.COLLECTIONS.CONVERSATIONS);
-      await conversationsCol.updateOne(
+      const updateDoc: any = { 
+        $set: { updatedAt: new Date() },
+        $inc: { 'metadata.messageCount': 1 },
+      };
+      
+      // Set userId only on first message (upsert)
+      if (userId) {
+        updateDoc.$setOnInsert = { userId, conversationId: message.conversationId };
+        console.log(`[Database] Setting userId=${userId} for conversation ${message.conversationId} (upsert)`);
+      } else {
+        console.log(`[Database] WARNING: No userId provided for conversation ${message.conversationId}`);
+      }
+      
+      const upsertResult = await conversationsCol.updateOne(
         { conversationId: message.conversationId },
-        { 
-          $set: { updatedAt: new Date() },
-          $inc: { 'metadata.messageCount': 1 },
-        },
+        updateDoc,
         { upsert: true }
       );
+      
+      console.log(`[Database] Conversation update result: matched=${upsertResult.matchedCount}, modified=${upsertResult.modifiedCount}, upserted=${upsertResult.upsertedId ? 'yes' : 'no'}`);
       
       return result.insertedId;
     } catch (error: any) {
@@ -658,12 +680,12 @@ class DatabaseManager {
   /**
    * Get all conversations (sorted by most recent)
    */
-  async getConversations(limit: number = 50, skip: number = 0): Promise<Conversation[]> {
+  async getConversations(userId: string, limit: number = 50, skip: number = 0): Promise<Conversation[]> {
     await this.ensureConnected();
     const conversationsCol = this.getCollection<Conversation>(this.COLLECTIONS.CONVERSATIONS);
     
     return await conversationsCol
-      .find({})
+      .find({ userId })
       .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(limit)

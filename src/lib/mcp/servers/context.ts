@@ -144,6 +144,10 @@ export class ContextServer extends McpServer {
             type: 'string',
             description: 'The conversation ID'
           },
+          userId: {
+            type: 'string',
+            description: 'The user ID who owns this conversation'
+          },
           role: {
             type: 'string',
             enum: ['system', 'user', 'assistant'],
@@ -170,7 +174,7 @@ export class ContextServer extends McpServer {
             additionalProperties: true
           }
         },
-        required: ['conversationId', 'role', 'content']
+        required: ['conversationId', 'userId', 'role', 'content']
       }
     });
 
@@ -228,10 +232,14 @@ export class ContextServer extends McpServer {
     // Define list_conversations tool
     this.defineTool({
       name: 'list_conversations',
-      description: 'List recent conversations with metadata. Returns conversations sorted by most recent activity.',
+      description: 'List recent conversations for a specific user. Returns conversations sorted by most recent activity.',
       inputSchema: {
         type: 'object',
         properties: {
+          userId: {
+            type: 'string',
+            description: 'User ID to list conversations for'
+          },
           limit: {
             type: 'number',
             description: 'Maximum number of conversations to return',
@@ -242,7 +250,8 @@ export class ContextServer extends McpServer {
             description: 'Number of conversations to skip (for pagination)',
             default: 0
           }
-        }
+        },
+        required: ['userId']
       }
     });
   }
@@ -614,6 +623,7 @@ export class ContextServer extends McpServer {
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const conversationId = args.conversationId as string;
+    const userId = args.userId as string;
     const role = args.role as 'system' | 'user' | 'assistant';
     const content = args.content as string;
     const messageId = args.messageId as string | undefined;
@@ -622,10 +632,10 @@ export class ContextServer extends McpServer {
 
     const publisher = new McpEventPublisher(this.publishRedis, 'context_store_message', 'Store Message', meta);
 
-    await publisher.publishStart({ input: { conversationId, role } });
-    console.log(`[Context MCP] storeMessage called - conversationId:${conversationId}, role:${role}, messageId:${messageId}, content length:${content?.length}`);
+    await publisher.publishStart({ input: { conversationId, userId, role } });
+    console.log(`[Context MCP] storeMessage called - conversationId:${conversationId}, userId:${userId}, role:${role}, messageId:${messageId}, content length:${content?.length}`);
     console.log(`[Context MCP] toolExecutions received:`, toolExecutions ? toolExecutions.length : 'undefined', toolExecutions ? JSON.stringify(toolExecutions).substring(0, 200) : '');
-    await publisher.publishLog('info', `💾 Storing ${role} message in ${conversationId}`);
+    await publisher.publishLog('info', `💾 Storing ${role} message in ${conversationId} for user ${userId}`);
 
     try {
       // Generate message ID if not provided
@@ -640,9 +650,9 @@ export class ContextServer extends McpServer {
         toolExecutions
       };
 
-      console.log(`[Context MCP] About to call addMessage - messageId:${finalMessageId}, role:${role}`);
+      console.log(`[Context MCP] About to call addMessage - messageId:${finalMessageId}, userId:${userId}, role:${role}`);
       // Store via memory manager (handles both Redis and MongoDB)
-      await this.memoryManager.addMessage(conversationId, message);
+      await this.memoryManager.addMessage(conversationId, message, userId);
       console.log(`[Context MCP] addMessage completed - messageId:${finalMessageId}`);
 
       const duration = publisher.getDuration();
@@ -803,24 +813,35 @@ export class ContextServer extends McpServer {
   }
 
   /**
-   * List conversations
+   * List conversations for a specific user
    */
   private async listConversations(
     args: Record<string, unknown>,
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
+    const userId = args.userId as string;
     const limit = (args.limit as number) || 50;
     const skip = (args.skip as number) || 0;
 
+    if (!userId) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'Error: userId is required'
+        }],
+        isError: true
+      };
+    }
+
     const publisher = new McpEventPublisher(this.publishRedis, 'context_list_conversations', 'List Conversations', meta);
 
-    await publisher.publishStart({ input: { limit, skip } });
-    await publisher.publishLog('info', `📋 Listing conversations (limit: ${limit}, skip: ${skip})`);
+    await publisher.publishStart({ input: { userId, limit, skip } });
+    await publisher.publishLog('info', `📋 Listing conversations for user ${userId} (limit: ${limit}, skip: ${skip})`);
 
     try {
       // Fetch from MongoDB
       const db = getDatabase();
-      const conversations = await db.getConversations(limit, skip);
+      const conversations = await db.getConversations(userId, limit, skip);
 
       const duration = publisher.getDuration();
 

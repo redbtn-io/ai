@@ -119,7 +119,7 @@ export class MemoryManager {
    * Add a new message to the conversation
    * Stores in both MongoDB (persistence) and Redis (hot cache of last 100 messages)
    */
-  async addMessage(conversationId: string, message: ConversationMessage): Promise<void> {
+  async addMessage(conversationId: string, message: ConversationMessage, userId?: string): Promise<void> {
     const key = `conversations:${conversationId}:messages`;
     const idIndexKey = `${key}:ids`;
 
@@ -168,7 +168,7 @@ export class MemoryManager {
         timestamp: new Date(message.timestamp),
         toolExecutions: message.toolExecutions || [],
         metadata: {}
-      }).catch(err => {
+      }, userId).catch(err => {
         console.error('[Memory] Failed to save message to MongoDB:', err.message);
         throw err; // Re-throw to trigger rollback
       });
