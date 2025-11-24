@@ -10,7 +10,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
     "mcp:start": "npx tsx src/mcp-servers.ts",
     "dev:server": "cd examples/rest-server && npm run dev",
     "start:server": "cd examples/rest-server && npm start",
@@ -20,7 +23,10 @@
     "db:seed-neurons": "npx tsx scripts/seed-default-neurons.ts",
     "db:update-user-defaults": "npx tsx scripts/update-user-defaults.ts",
     "db:seed-graphs": "npx tsx scripts/seed-default-graphs.ts",
-    "db:update-user-graphs": "npx tsx scripts/update-user-graph-defaults.ts"
+    "db:update-user-graphs": "npx tsx scripts/update-user-graph-defaults.ts",
+    "migrate-universal-nodes": "npx tsx src/scripts/migrate-universal-nodes.ts",
+    "verify-universal-nodes": "npx tsx src/scripts/verify-universal-nodes.ts",
+    "seed-default-graphs": "npx tsx src/scripts/seed-default-graphs.ts"
   },
   "author": "",
   "license": "ISC",
@@ -37,6 +43,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "fuse.js": "^7.1.0",
     "ioredis": "^5.8.0",
     "lru-cache": "^11.0.4",
     "mongodb": "^6.20.0",
@@ -48,6 +55,9 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/node": "^24.5.2",
-    "typescript": "^5.9.2"
+    "@vitest/ui": "^4.0.10",
+    "happy-dom": "^20.0.10",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }

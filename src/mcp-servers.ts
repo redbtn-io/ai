@@ -40,7 +40,7 @@ async function main() {
     servers.push(ragServer);
     console.log('[MCP Launcher] ✓ RAG server started on http://localhost:3003/mcp');
 
-    // Context Server (port 3004)
+    // Context Server (port 3004) - now includes pattern_matcher tool
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
     const contextServer = new ContextServerSSE('context', '1.0.0', 3004, redisUrl);
     await contextServer.start();

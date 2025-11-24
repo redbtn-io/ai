@@ -1,0 +1,111 @@
+{
+  "patterns": [
+    {
+      "id": "greeting",
+      "patterns": [
+        "hi",
+        "hello",
+        "hey",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "greetings",
+        "howdy",
+        "what's up"
+      ],
+      "confidence": 0.95,
+      "fastpathTool": null,
+      "category": "conversational"
+    },
+    {
+      "id": "web_search",
+      "patterns": [
+        "search for",
+        "look up",
+        "find information about",
+        "what is",
+        "who is",
+        "where is",
+        "when did",
+        "how does",
+        "tell me about",
+        "research"
+      ],
+      "confidence": 0.85,
+      "fastpathTool": "web_search",
+      "category": "research"
+    },
+    {
+      "id": "web_scrape",
+      "patterns": [
+        "read this page:",
+        "summarize this url:",
+        "what does this page say:",
+        "analyze https://",
+        "scrape http",
+        "fetch from",
+        "get content from"
+      ],
+      "confidence": 0.90,
+      "fastpathTool": "web_scrape",
+      "category": "research"
+    },
+    {
+      "id": "execute_command",
+      "patterns": [
+        "run this command:",
+        "execute:",
+        "shell:",
+        "terminal:",
+        "bash:",
+        "cmd:"
+      ],
+      "confidence": 0.92,
+      "fastpathTool": "execute_command",
+      "category": "automation"
+    },
+    {
+      "id": "simple_question",
+      "patterns": [
+        "what's",
+        "how do i",
+        "can you",
+        "please",
+        "explain",
+        "why",
+        "could you"
+      ],
+      "confidence": 0.70,
+      "fastpathTool": null,
+      "category": "conversational"
+    },
+    {
+      "id": "code_generation",
+      "patterns": [
+        "write code",
+        "create a function",
+        "implement",
+        "generate code",
+        "build a",
+        "develop"
+      ],
+      "confidence": 0.80,
+      "fastpathTool": null,
+      "category": "development"
+    },
+    {
+      "id": "file_operation",
+      "patterns": [
+        "create file",
+        "read file",
+        "write to file",
+        "delete file",
+        "list files",
+        "open file"
+      ],
+      "confidence": 0.88,
+      "fastpathTool": "file_operation",
+      "category": "automation"
+    }
+  ]
+}

@@ -14,10 +14,11 @@ import { classifierNode } from '../nodes/classifier';
 import { routerNode } from '../nodes/router';
 import { plannerNode } from '../nodes/planner';
 import { executorNode } from '../nodes/executor';
-import { responderNode } from '../nodes/responder';
+import { respondNode } from '../nodes/respond';
 import { searchNode } from '../nodes/search';
 import { scrapeNode } from '../nodes/scrape';
 import { commandNode } from '../nodes/command';
+import { universalNode } from '../nodes/universal/universalNode';
 
 /**
  * Type for node function signature
@@ -37,10 +38,11 @@ export const NODE_REGISTRY: Record<GraphNodeType, NodeFunction> = {
   [GraphNodeType.ROUTER]: routerNode,
   [GraphNodeType.PLANNER]: plannerNode,
   [GraphNodeType.EXECUTOR]: executorNode,
-  [GraphNodeType.RESPONDER]: responderNode,
+  [GraphNodeType.RESPONDER]: respondNode,
   [GraphNodeType.SEARCH]: searchNode,
   [GraphNodeType.SCRAPE]: scrapeNode,
-  [GraphNodeType.COMMAND]: commandNode
+  [GraphNodeType.COMMAND]: commandNode,
+  [GraphNodeType.UNIVERSAL]: universalNode
 };
 
 /**

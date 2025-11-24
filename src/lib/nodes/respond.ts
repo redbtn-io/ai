@@ -39,8 +39,17 @@ interface ResponderState {
   finalResponse?: string; // Pre-generated response from tool nodes
 }
 
-export const responderNode = async (state: ResponderState): Promise<any> => {
+export const respondNode = async (state: ResponderState): Promise<any> => {
   try {
+    // Extract node config (injected by compiler if graph node has config)
+    const nodeConfig = (state as any).nodeConfig || {};
+    const {
+      systemPrompt,        // Custom system message override
+      temperature,         // Temperature override (0.0-2.0)
+      maxTokens,           // Max output tokens
+      neuronId: configNeuronId  // Neuron override from config
+    } = nodeConfig;
+    
     const query = state.query;
     const options: InvokeOptions = state.options || {};
     const conversationId = options.conversationId;
@@ -102,8 +111,8 @@ export const responderNode = async (state: ResponderState): Promise<any> => {
       conversationId,
     });
 
-    // Get the user's default chat neuron
-    const neuronId = state.defaultNeuronId || 'red-neuron';
+    // Get the user's default chat neuron (or use config override)
+    const neuronId = configNeuronId || state.defaultNeuronId || 'red-neuron';
     const model = await state.neuronRegistry.getModel(neuronId, state.userId);
     const modelWithTools = model;
 
@@ -117,10 +126,10 @@ export const responderNode = async (state: ResponderState): Promise<any> => {
       // Build messages from scratch using contextMessages from router
       const initialMessages: any[] = [];
       
-      // Add system message (from state or default)
+      // Add system message (from config, state, or default)
       // Note: Router is node 1, so responder is at least node 2 (or higher after tool nodes)
       const nodeNumber = state.nodeNumber || 2;
-      const systemMessage = state.systemMessage || `${getNodeSystemPrefix(nodeNumber, 'Responder')}
+      const systemMessage = systemPrompt || state.systemMessage || `${getNodeSystemPrefix(nodeNumber, 'Responder')}
 
 You are Red, an AI assistant developed by redbtn.io.
 
@@ -175,7 +184,12 @@ CRITICAL RULES:
     const maxStreamAttempts = 3;
     for (let attempt = 1; attempt <= maxStreamAttempts; attempt++) {
       try {
-        const stream = await modelWithTools.stream(messages);
+        // Build invocation options with config overrides
+        const invokeOptions: any = {};
+        if (temperature !== undefined) invokeOptions.temperature = temperature;
+        if (maxTokens !== undefined) invokeOptions.max_tokens = maxTokens;
+        
+        const stream = await modelWithTools.stream(messages, invokeOptions);
         let fullContent = '';
         let usage_metadata: any = null;
         let response_metadata: any = null;

@@ -25,6 +25,16 @@ export interface ClassifierDecision {
 }
 
 export const classifierNode = async (state: any) => {
+  // Extract config options
+  const nodeConfig = (state as any).nodeConfig || {};
+  const {
+    customPrompt,                // Custom classification prompt override
+    temperature,                 // Classification temperature (default: model default)
+    logDecisions = false,        // Verbose decision logging
+    neuronId: configNeuronId,    // Custom neuron override
+    routingMap,                  // Custom routing map (e.g., { weather: "You detect weather keywords", general: "Everything else" })
+  } = nodeConfig;
+  
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
   
@@ -51,6 +61,38 @@ export const classifierNode = async (state: any) => {
     generationId,
     metadata: { query: userQuery.substring(0, 100) }
   });
+
+  // If custom routing map provided, use pattern-based routing
+  if (routingMap && typeof routingMap === 'object') {
+    for (const [routeKey, pattern] of Object.entries(routingMap)) {
+      if (typeof pattern === 'string') {
+        // Simple keyword matching
+        const keywords = pattern.toLowerCase().split(/[,\s]+/);
+        const queryLower = userQuery.toLowerCase();
+        if (keywords.some(keyword => queryLower.includes(keyword))) {
+          await state.logger.log({
+            level: 'info',
+            category: 'classifier',
+            message: `✅ Route: ${routeKey} (matched: ${pattern})`,
+            conversationId,
+            generationId
+          });
+          return {
+            routerDecision: routeKey,
+            routerReason: `Matched pattern: ${pattern}`,
+            routerConfidence: 1.0
+          };
+        }
+      }
+    }
+    // No pattern matched, use fallback if available in state
+    const fallback = (state as any).fallbackRoute || Object.keys(routingMap)[0];
+    return {
+      routerDecision: fallback,
+      routerReason: 'No pattern matched, using fallback',
+      routerConfidence: 0.5
+    };
+  }
   
   // Build conversation context (last few messages for reference understanding)
   let contextSummary = '';
@@ -63,7 +105,8 @@ export const classifierNode = async (state: any) => {
     }).join('\n');
   }
   
-  const classificationPrompt = `You are a routing classifier. Your job is to decide if a query can be answered DIRECTLY with your knowledge, or if it requires external TOOLS/PLANNING.
+  // Use custom prompt if provided, otherwise use default
+  const classificationPrompt = customPrompt || `You are a routing classifier. Your job is to decide if a query can be answered DIRECTLY with your knowledge, or if it requires external TOOLS/PLANNING.
 
 ${contextSummary ? `Recent Context:\n${contextSummary}\n\n` : ''}User Query: ${userQuery}
 
@@ -101,8 +144,8 @@ Respond with JSON:
 }`;
 
   try {
-    // Use fast worker model for classification
-    const neuronId = state.defaultWorkerNeuronId || 'red-neuron';
+    // Use configured neuron or default worker model
+    const neuronId = configNeuronId || state.defaultWorkerNeuronId || 'red-neuron';
     const model = await state.neuronRegistry.getModel(neuronId, state.userId);
     
     // Get node number from state or default to 1 (classifier is typically first after precheck)
@@ -113,10 +156,17 @@ Respond with JSON:
 You are a query classifier. Your job is to route queries to either DIRECT response or PLANNING.
 Respond only with valid JSON.`;
     
-    const response = await model.invoke([
-      { role: 'system', content: systemMessage },
-      { role: 'user', content: classificationPrompt }
-    ]);
+    // Build invocation options with temperature if specified
+    const invokeOptions: any = {};
+    if (temperature !== undefined) invokeOptions.temperature = temperature;
+    
+    const response = await model.invoke(
+      [
+        { role: 'system', content: systemMessage },
+        { role: 'user', content: classificationPrompt }
+      ],
+      Object.keys(invokeOptions).length > 0 ? invokeOptions : undefined
+    );
     
     const responseText = typeof response.content === 'string'
       ? response.content
@@ -131,18 +181,38 @@ Respond only with valid JSON.`;
     
     const decision: ClassifierDecision = jsonMatch;
     
-    await state.logger.log({
-      level: 'info',
-      category: 'classifier',
-      message: `📊 Decision: ${decision.decision.toUpperCase()} (confidence: ${decision.confidence})`,
-      conversationId,
-      generationId,
-      metadata: {
-        decision: decision.decision,
-        confidence: decision.confidence,
-        reasoning: decision.reasoning
-      }
-    });
+    // Verbose logging if enabled
+    if (logDecisions) {
+      await state.logger.log({
+        level: 'info',
+        category: 'classifier',
+        message: `📊 [VERBOSE] Full classification details`,
+        conversationId,
+        generationId,
+        metadata: {
+          decision: decision.decision,
+          confidence: decision.confidence,
+          reasoning: decision.reasoning,
+          query: userQuery,
+          neuronId,
+          temperature,
+          customPrompt: !!customPrompt
+        }
+      });
+    } else {
+      await state.logger.log({
+        level: 'info',
+        category: 'classifier',
+        message: `📊 Decision: ${decision.decision.toUpperCase()} (confidence: ${decision.confidence})`,
+        conversationId,
+        generationId,
+        metadata: {
+          decision: decision.decision,
+          confidence: decision.confidence,
+          reasoning: decision.reasoning
+        }
+      });
+    }
     
     // Log low confidence but still use the decision (LLM knows best)
     if (decision.confidence < 0.6) {

@@ -20,19 +20,25 @@ export enum GraphNodeType {
   RESPONDER = 'responder',
   SEARCH = 'search',
   SCRAPE = 'scrape',
-  COMMAND = 'command'
+  COMMAND = 'command',
+  UNIVERSAL = 'universal'
 }
 
 /**
- * Graph template identifiers for system-provided graphs
+ * System default graph IDs (Phase 2: Dynamic Graph System)
+ * Default graphs are stored with userId: 'system' and isDefault: true in MongoDB
+ * These constants provide convenient access to system default graph IDs
  */
-export enum GraphTemplate {
-  SIMPLE = 'red-graph-simple',
-  DEFAULT = 'red-graph-default',
-  RESEARCH = 'red-graph-research',
-  AUTOMATION = 'red-graph-automation',
-  ENTERPRISE = 'red-graph-enterprise'
-}
+export const SYSTEM_TEMPLATES = {
+  SIMPLE: 'red-chat',
+  DEFAULT: 'red-assistant',
+  // Future system graphs:
+  // RESEARCH: 'research-assistant',
+  // AUTOMATION: 'automation-agent',
+  // ENTERPRISE: 'enterprise-workflow'
+} as const;
+
+export type SystemTemplateId = typeof SYSTEM_TEMPLATES[keyof typeof SYSTEM_TEMPLATES];
 
 /**
  * Node definition in graph configuration
@@ -172,8 +178,8 @@ export function isGraphNodeType(value: string): value is GraphNodeType {
 }
 
 /**
- * Type guard to check if a string is a valid GraphTemplate
+ * Type guard to check if a string is a valid system template ID
  */
-export function isGraphTemplate(value: string): value is GraphTemplate {
-  return Object.values(GraphTemplate).includes(value as GraphTemplate);
+export function isSystemTemplate(value: string): value is SystemTemplateId {
+  return Object.values(SYSTEM_TEMPLATES).includes(value as SystemTemplateId);
 }

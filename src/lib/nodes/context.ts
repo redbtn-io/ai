@@ -13,6 +13,15 @@ interface ContextNodeState {
 }
 
 export const contextNode = async (state: ContextNodeState) => {
+  // Extract config options
+  const nodeConfig = (state as any).nodeConfig || {};
+  const {
+    maxTokens = 30000,           // Max context tokens to load
+    includeSummary = true,        // Whether to load executive summary
+    summaryType = 'trailing',     // 'executive' | 'trailing'
+    maxMessages,                  // Optional: Limit number of messages
+  } = nodeConfig;
+  
   const options = state.options || {};
   const conversationId = options.conversationId;
   const generationId = options.generationId;
@@ -44,9 +53,9 @@ export const contextNode = async (state: ContextNodeState) => {
       'get_context_history',
       {
         conversationId,
-        maxTokens: 30000,
-        includeSummary: true,
-        summaryType: 'trailing',
+        maxTokens,
+        includeSummary,
+        summaryType,
         format: 'llm'
       },
       {
@@ -60,15 +69,45 @@ export const contextNode = async (state: ContextNodeState) => {
       const contextData = JSON.parse(contextResult.content[0].text);
       const rawMessages = contextData.messages || [];
 
-      const seenContent = new Set<string>();
-      contextMessages = rawMessages.filter((msg: any) => {
-        const key = `${msg.role}:${msg.content}`;
-        if (seenContent.has(key)) {
-          return false;
+      console.log('[ContextNode] ===== RAW CONTEXT FROM MCP =====');
+      console.log('[ContextNode] Raw message count:', rawMessages.length);
+      rawMessages.forEach((msg: any, i: number) => {
+        console.log(`[ContextNode]   [${i}] ${msg.role}: ${msg.content?.substring(0, 100)}... (id: ${msg.id || 'NO_ID'})`);
+      });
+
+      // Deduplicate by message ID if available, otherwise by position
+      const seenIds = new Set<string>();
+      contextMessages = rawMessages.filter((msg: any, index: number) => {
+        // If message has an ID, use it for deduplication
+        if (msg.id) {
+          if (seenIds.has(msg.id)) {
+            console.log(`[ContextNode] FILTERING OUT duplicate ID: ${msg.id}`);
+            return false;
+          }
+          seenIds.add(msg.id);
+          return true;
         }
-        seenContent.add(key);
+        // If no ID, keep the message (can't reliably deduplicate without ID)
         return true;
       });
+
+      console.log('[ContextNode] ===== AFTER DEDUPLICATION =====');
+      console.log('[ContextNode] Final message count:', contextMessages.length);
+      contextMessages.forEach((msg: any, i: number) => {
+        console.log(`[ContextNode]   [${i}] ${msg.role}: ${msg.content?.substring(0, 100)}...`);
+      });
+
+      // Apply maxMessages limit if configured
+      if (maxMessages !== undefined && contextMessages.length > maxMessages) {
+        contextMessages = contextMessages.slice(-maxMessages);
+        await state.logger.log({
+          level: 'debug',
+          category: 'context',
+          message: `<yellow>ℹ Limited context to ${maxMessages} messages</yellow>`,
+          conversationId,
+          generationId,
+        });
+      }
 
       const removed = rawMessages.length - contextMessages.length;
       if (removed > 0) {
@@ -86,6 +125,24 @@ export const contextNode = async (state: ContextNodeState) => {
   }
 
   try {
+    // Only load summary if includeSummary is true
+    if (!includeSummary) {
+      await state.logger.log({
+        level: 'debug',
+        category: 'context',
+        message: `<yellow>ℹ Skipping summary (includeSummary=false)</yellow>`,
+        conversationId,
+        generationId,
+      });
+      
+      return {
+        contextMessages,
+        contextSummary,
+        contextLoaded: true,
+        nodeNumber: nextNodeNumber
+      };
+    }
+    
     const summaryResult = await state.mcpClient.callTool(
       'get_summary',
       {

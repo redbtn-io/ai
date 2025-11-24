@@ -42,7 +42,7 @@ export function getNodeSystemPrefix(nodeNumber: number, nodeName: string): strin
   
   const ordinal = `${nodeNumber}${getOrdinalSuffix(nodeNumber)}`;
 
-  return `You are a ${nodeName} node and the ${ordinal} node in a cognition graph for artificial intelligence named Red. The current date and time is ${dateTimeStr}.`;
+  return `Above all else, you are a ${nodeName} node and the ${ordinal} node in a cognition graph for artificial intelligence named Red, built by redbtn. The current date and time is ${dateTimeStr}.`;
 }
 
 /**

@@ -229,6 +229,7 @@ export class Red {
     this.isLoaded = true;
     
     // Register MCP servers (SSE transport on different ports)
+    // Note: pattern_matcher tool is now part of context server (port 3004)
     try {
       await this.mcpRegistry.registerServer({ name: 'web', url: 'http://localhost:3001/mcp' });
       await this.mcpRegistry.registerServer({ name: 'system', url: 'http://localhost:3002/mcp' });

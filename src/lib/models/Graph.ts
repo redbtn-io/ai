@@ -270,5 +270,7 @@ graphSchema.statics.findAccessibleByUser = async function(userId: string, userTi
 
 /**
  * Export the Graph model
+ * Use models.Graph if already compiled (hot reload), otherwise compile new model
  */
-export const Graph = model<GraphDocument>('Graph', graphSchema);
+import { models } from 'mongoose';
+export const Graph = models.Graph || model<GraphDocument>('Graph', graphSchema);

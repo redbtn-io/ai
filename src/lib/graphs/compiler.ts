@@ -8,11 +8,30 @@
 
 import { StateGraph, END } from "@langchain/langgraph";
 import { GraphConfig, GraphEdgeConfig, CompiledGraph } from '../types/graph';
-import { NODE_REGISTRY, isValidNodeType } from './nodeRegistry';
+import { NODE_REGISTRY, isValidNodeType, NodeFunction } from './nodeRegistry';
 import { createConditionFunction } from './conditionEvaluator';
 
 // Import RedGraphState from the static graph file
 import { RedGraphState } from './red';
+
+/**
+ * Creates a configurable node wrapper that injects config into the state
+ * This allows nodes to access custom configuration from GraphNodeConfig
+ */
+function createConfigurableNode(
+  nodeFn: NodeFunction,
+  config: Record<string, any>
+): NodeFunction {
+  return async (state: any) => {
+    // Inject node config into state so the node can access it
+    const enhancedState = {
+      ...state,
+      nodeConfig: config
+    };
+    
+    return await nodeFn(enhancedState);
+  };
+}
 
 /**
  * Compiles a graph configuration into a LangGraph CompiledStateGraph.
@@ -42,7 +61,13 @@ export function compileGraphFromConfig(config: GraphConfig): CompiledGraph {
     }
     
     console.log(`[GraphCompiler]   Adding node: ${node.id} (type: ${node.type})`);
-    builder.addNode(node.id, nodeFn);
+    
+    // Wrap node function to inject config if provided
+    const wrappedFn = node.config 
+      ? createConfigurableNode(nodeFn, node.config)
+      : nodeFn;
+    
+    builder.addNode(node.id, wrappedFn);
   }
   
   // Step 4: Add all edges (simple and conditional)
@@ -253,6 +278,9 @@ function addConditionalEdge(
   
   const targetKeys = Object.keys(edge.targets || {});
   console.log(`[GraphCompiler]   Adding conditional edge: ${edge.from} → [${targetKeys.join(', ')}]`);
+  // Log the target map for easier diagnostics at runtime
+  console.log(`[GraphCompiler]     targetMap keys: ${Object.keys(targetMap).join(', ')}`);
+  console.log(`[GraphCompiler]     targetMap nodes: ${Object.values(targetMap).join(', ')}`);
   
   builder.addConditionalEdges(
     edge.from as any,

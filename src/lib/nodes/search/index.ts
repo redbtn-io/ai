@@ -42,13 +42,21 @@ interface SearchNodeState {
   nodeNumber?: number; // Current node position in graph
 }
 
-const MAX_SEARCH_ITERATIONS = 5;
-
 /**
  * Main search node function with iteration capability
  */
 export async function searchNode(state: SearchNodeState): Promise<Partial<any>> {
   const startTime = Date.now();
+  
+  // Extract config options
+  const nodeConfig = (state as any).nodeConfig || {};
+  const {
+    maxResults = 10,              // Number of search results (Google API limit is 10)
+    maxIterations = 5,            // Max search iterations
+    evaluateResults = true,       // Whether to evaluate if results are sufficient
+    neuronId: configNeuronId,     // Custom evaluator neuron
+  } = nodeConfig;
+  
   const userQuery = state.toolParam || state.query?.message || '';
   const conversationId = state.options?.conversationId;
   const generationId = state.options?.generationId;
@@ -58,7 +66,7 @@ export async function searchNode(state: SearchNodeState): Promise<Partial<any>> 
   const currentNodeNumber = state.nodeNumber || 2; // If not set, default to 2
   const nextNodeNumber = currentNodeNumber + 1; // Next node (responder) will be one more
   
-  const maxResults = 10; // Google API limit is 10 results per query
+  const MAX_SEARCH_ITERATIONS = maxIterations;
   
   // NOTE: Event publishing is now handled by the MCP registry wrapper
   // No need for node-level event publishing anymore
@@ -293,6 +301,40 @@ CRITICAL RULES:
     // ==========================================
     // STEP 5: Evaluate if we have enough information
     // ==========================================
+    
+    // Skip evaluation if disabled in config
+    if (!evaluateResults) {
+      await state.logger.log({
+        level: 'info',
+        category: 'search',
+        message: `ℹ️ Skipping result evaluation (evaluateResults=false), proceeding with results`,
+        conversationId,
+        generationId
+      });
+      
+      // Check if using planner mode
+      const executionPlan = (state as any).executionPlan;
+      const currentStepIndex = (state as any).currentStepIndex || 0;
+      const usingPlanner = executionPlan && executionPlan.steps;
+      
+      if (usingPlanner) {
+        return {
+          messages: accumulatedMessages,
+          searchIterations: currentIteration + 1,
+          currentStepIndex: currentStepIndex + 1,
+          nextGraph: undefined,
+          nodeNumber: nextNodeNumber
+        };
+      } else {
+        return {
+          messages: accumulatedMessages,
+          searchIterations: currentIteration + 1,
+          nextGraph: 'responder',
+          nodeNumber: nextNodeNumber
+        };
+      }
+    }
+    
     if (publisher) {
       await publisher.publishProgress(`🤔 Evaluating if search results are sufficient (iteration ${currentIteration + 1}/${MAX_SEARCH_ITERATIONS})...`);
     }
@@ -339,7 +381,8 @@ Be practical: If results provide ANY useful information, consider it sufficient.
     let evaluation: { sufficient: boolean; reasoning: string; newSearchQuery?: string };
     
     try {
-      const neuronId = state.defaultWorkerNeuronId || 'red-neuron';
+      // Use configured neuron or default worker model
+      const neuronId = configNeuronId || state.defaultWorkerNeuronId || 'red-neuron';
       const model = await state.neuronRegistry.getModel(neuronId, state.userId);
       const evalResponse = await invokeWithRetry(model, evaluationMessages, {
         context: 'search result evaluation',

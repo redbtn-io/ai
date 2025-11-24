@@ -8,6 +8,37 @@ import { redGraph } from '../lib/graphs/red';
 import * as background from './background';
 
 /**
+ * Active streams tracker for memory leak prevention (Pre-Phase 2.5 Part 4)
+ * Maps generationId to AbortController for cleanup
+ */
+const activeStreams = new Map<string, AbortController>();
+
+/**
+ * Aborts an active stream by generationId
+ * @param generationId The generation ID of the stream to abort
+ * @returns true if stream was found and aborted, false otherwise
+ */
+export function abortStream(generationId: string): boolean {
+  const controller = activeStreams.get(generationId);
+  if (controller) {
+    console.log(`[Respond] Aborting stream for generation ${generationId}`);
+    controller.abort();
+    activeStreams.delete(generationId);
+    return true;
+  }
+  console.warn(`[Respond] No active stream found for generation ${generationId}`);
+  return false;
+}
+
+/**
+ * Gets the count of active streams
+ * @returns Number of currently active streams
+ */
+export function getActiveStreamCount(): number {
+  return activeStreams.size;
+}
+
+/**
  * Handles a direct, on-demand request from a user-facing application.
  * Automatically manages conversation history, memory, and summarization.
  * 
@@ -24,6 +55,8 @@ export async function respond(
   query: { message: string },
   options: InvokeOptions = {}
 ): Promise<any | AsyncGenerator<string | any, void, unknown>> {
+  console.log('[Respond] ========== FUNCTION ENTRY - CODE VERSION 2025-11-23-19:05 ==========');
+  console.log('[Respond] options:', JSON.stringify(options, null, 2));
   // Phase 0: Require userId for per-user model loading
   const userId = (options as any).userId;
   if (!userId) {
@@ -34,7 +67,7 @@ export async function respond(
   let accountTier = 4; // Default to FREE tier
   let defaultNeuronId = 'red-neuron';
   let defaultWorkerNeuronId = 'red-neuron';
-  let defaultGraphId = 'red-graph-default'; // Phase 1: Default graph ID
+  let defaultGraphId = 'assistant-search'; // Phase 2: Dynamic graph system - default to assistant-search
   
   try {
     // Load user settings from MongoDB (Mongoose is already connected via database.ts)
@@ -58,7 +91,7 @@ export async function respond(
       accountTier = user.accountLevel ?? 4;
       defaultNeuronId = user.defaultNeuronId || 'red-neuron';
       defaultWorkerNeuronId = user.defaultWorkerNeuronId || 'red-neuron';
-      defaultGraphId = user.defaultGraphId || 'red-graph-default';
+      defaultGraphId = user.defaultGraphId || 'assistant-search';
       console.log(`[Respond] Loaded user settings - Tier: ${accountTier}, Graph: ${defaultGraphId}, Neuron: ${defaultNeuronId}`);
     } else {
       console.warn(`[Respond] User ${userId} not found, using FREE tier defaults`);
@@ -98,12 +131,12 @@ export async function respond(
     
     if (isAccessDenied || isNotFound) {
       const reason = isAccessDenied ? 'Access denied' : 'Graph not found';
-      console.warn(`[Respond] ${reason} for graph ${graphId}, falling back to red-graph-default`);
-      actualGraphId = 'red-graph-default';
+      console.warn(`[Respond] ${reason} for graph ${graphId}, falling back to assistant-search`);
+      actualGraphId = 'assistant-search';
       
       try {
-        compiledGraph = await red.graphRegistry.getGraph('red-graph-default', userId);
-        console.log(`[Respond] Using fallback graph: red-graph-default (compiled at ${compiledGraph.compiledAt.toISOString()})`);
+        compiledGraph = await red.graphRegistry.getGraph('assistant-search', userId);
+        console.log(`[Respond] Using fallback graph: assistant-search (compiled at ${compiledGraph.compiledAt.toISOString()})`);
       } catch (fallbackError) {
         console.error(`[Respond] Failed to load fallback graph:`, fallbackError);
         throw new Error(`Failed to load graph '${graphId}' and fallback failed: ${fallbackError}`);
@@ -190,14 +223,35 @@ CRITICAL RULES:
   // Tool nodes may override this with their own system messages
   (initialState as any).systemMessage = SYSTEM_PROMPT;
 
+  // Also inject the current date/time into data so every node can access it
+  // This is defensive: some execution paths or node configs may not include the systemMessage
+  // so putting the date into data ensures planner/executor/respond nodes can read it.
+  try {
+    const now = new Date();
+    (initialState as any).data = {
+      ...((initialState as any).data || {}),
+      currentDateISO: now.toISOString(),
+      currentDate: now.toLocaleDateString(),
+      currentDateTime: now.toLocaleString(),
+    };
+  } catch (e) {
+    // Fail-safe: don't break respond flow if date injection fails
+    /* noop */
+  }
+
   // Check if streaming is requested
+  console.log(`[Respond] Stream option:`, options.stream);
   if (options.stream) {
+    console.log(`[Respond] Taking STREAMING path`);
     // Phase 1: Use compiled graph for streaming
     return streamThroughGraphWithMemory(red, compiledGraph, initialState, conversationId, generationId, requestId, assistantMessageId, userId, defaultNeuronId);
   } else {
+    console.log(`[Respond] Taking NON-STREAMING path`);
     // Phase 1: Invoke the compiled graph and return the full AIMessage
     const result = await compiledGraph.graph.invoke(initialState);
     const response = result.response;
+    console.log(`[Respond] Non-streaming: Graph invoked, got response`);
+
     
     // Retrieve tool executions from Redis state
     let toolExecutions: any[] = [];
@@ -265,6 +319,18 @@ CRITICAL RULES:
       toolExecutions
     }, { conversationId, generationId, messageId: requestId });
     
+    console.log(`[Respond] Non-streaming: About to complete generation ${generationId}`);
+    // Complete the generation (non-streaming path)
+    await red.logger.completeGeneration(generationId, {
+      response: typeof response.content === 'string' ? response.content : JSON.stringify(response.content),
+      thinking: undefined, // Non-streaming doesn't capture thinking separately
+      route: (result as any).toolAction || 'chat',
+      toolsUsed: (result as any).selectedTools,
+      model: defaultNeuronId,
+      tokens: response.usage_metadata,
+    });
+    console.log(`[Respond] Non-streaming: Generation ${generationId} marked as complete`);
+    
     // Get message count for title generation via Context MCP
     const metadataResult = await red.callMcpTool('get_conversation_metadata', {
       conversationId
@@ -308,7 +374,32 @@ async function* streamThroughGraphWithMemory(
   userId?: string,
   defaultNeuronId: string = 'red-neuron'
 ): AsyncGenerator<string | any, void, unknown> {
+  // Stream timeout setup (Pre-Phase 2.5 Part 4)
+  const STREAM_TIMEOUT_MS = 60000; // 60 seconds
+  let timeoutHandle: NodeJS.Timeout | null = null;
+  
+  const clearStreamTimeout = () => {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
+  };
+  
+  // Memory leak prevention: Track active stream (Pre-Phase 2.5 Part 4)
+  const abortController = new AbortController();
+  activeStreams.set(generationId, abortController);
+  console.log(`[Respond] Registered stream ${generationId} (active: ${activeStreams.size})`);
+  
   try {
+    // Start stream timeout
+    timeoutHandle = setTimeout(() => {
+      const error = new Error(
+        `Stream timeout after ${STREAM_TIMEOUT_MS}ms for conversation ${conversationId}, generation ${generationId}`
+      );
+      console.error('[Respond] Stream timeout:', error.message);
+      throw error;
+    }, STREAM_TIMEOUT_MS);
+    
     // Import thinking utilities
     const { extractThinking, logThinking } = await import('../lib/utils/thinking');
     
@@ -345,6 +436,23 @@ async function* streamThroughGraphWithMemory(
     let toolIndicatorSent = false;
     let pendingBuffer = ''; // Buffer for partial tag detection across chunks
     
+    // Chunk batching for streaming optimization (Pre-Phase 2.5 Part 4)
+    const BATCH_INTERVAL_MS = 50; // Yield buffered chunks every 50ms
+    const BATCH_SIZE = 10; // Or when buffer reaches 10 characters
+    let chunkBuffer = '';
+    let lastYieldTime = Date.now();
+    
+    // Streaming metrics tracking (Pre-Phase 2.5 Part 4)
+    const streamingMetrics = {
+      startTime: Date.now(),
+      endTime: 0,
+      chunksReceived: 0,
+      chunksYielded: 0,
+      totalBytes: 0,
+      streamingDuration: 0,
+      averageChunkSize: 0
+    };
+    
     for await (const event of stream) {
       eventCount++;
       
@@ -357,15 +465,23 @@ async function* streamThroughGraphWithMemory(
       const eventTags = event.tags || [];
       const runName = event.metadata?.langgraph_node || '';
       
-      // CRITICAL: Only stream content from the responder node
-      // All other LLM calls (router, optimizer, search extractors, etc.) are internal
-      // The langgraph_node metadata should be exactly "responder" for the responder node
-      const isResponderNode = runName === 'responder';
+      // CRITICAL: Only stream content from the respond node
+      // All other LLM calls (router, planner, search extractors, etc.) are internal
+      // The langgraph_node metadata should be exactly "respond" for the respond node
+      const isRespondNode = runName === 'respond' || runName === 'responder';
+      
+      // Check if current universal node step should stream to user
+      // This flag is set by neuronExecutor before streaming
+      const streamToUser = initialState._currentStepStreamToUser === true;
       
       // Yield streaming content chunks (for models that stream tokens)
-      // But ONLY from the responder node - all other LLM calls are internal
-      if (event.event === "on_llm_stream" && event.data?.chunk?.content && isResponderNode) {
+      // From respond node (legacy name: responder) OR from universal nodes with stream=true
+      if (event.event === "on_llm_stream" && event.data?.chunk?.content && (isRespondNode || streamToUser)) {
         let content = event.data.chunk.content;
+        
+        // Track streaming metrics
+        streamingMetrics.chunksReceived++;
+        streamingMetrics.totalBytes += Buffer.byteLength(content, 'utf8');
         
         // Add content to pending buffer for tag detection
         pendingBuffer += content;
@@ -494,14 +610,24 @@ async function* streamThroughGraphWithMemory(
             
             fullContent += char;
             streamedTokens = true;
-            yield char; // Only stream non-thinking content
+            
+            // Chunk batching: Add to buffer and yield when ready
+            chunkBuffer += char;
+            const now = Date.now();
+            const timeSinceLastYield = now - lastYieldTime;
+            if (chunkBuffer.length >= BATCH_SIZE || timeSinceLastYield >= BATCH_INTERVAL_MS) {
+              streamingMetrics.chunksYielded++;
+              yield chunkBuffer;
+              chunkBuffer = '';
+              lastYieldTime = now;
+            }
           }
         }
       }
       
       // Capture the final message when LLM completes - use on_llm_end
-      // Only from responder node
-      if (event.event === "on_llm_end" && isResponderNode) {
+      // Only from respond node
+      if (event.event === "on_llm_end" && isRespondNode) {
         // The AIMessage is nested in the generations array
         const generations = event.data?.output?.generations;
         if (generations && generations[0] && generations[0][0]?.message) {
@@ -532,14 +658,54 @@ async function* streamThroughGraphWithMemory(
         }
         fullContent += char;
         streamedTokens = true;
-        yield char;
+        
+        // Chunk batching: Add to buffer and yield when ready
+        chunkBuffer += char;
+        const now = Date.now();
+        const timeSinceLastYield = now - lastYieldTime;
+        if (chunkBuffer.length >= BATCH_SIZE || timeSinceLastYield >= BATCH_INTERVAL_MS) {
+          streamingMetrics.chunksYielded++;
+          yield chunkBuffer;
+          chunkBuffer = '';
+          lastYieldTime = now;
+        }
       }
     }
+    
+    // Flush any remaining content in chunk buffer
+    if (chunkBuffer.length > 0) {
+      streamingMetrics.chunksYielded++;
+      yield chunkBuffer;
+      chunkBuffer = '';
+    }
+    
+    // Calculate final metrics
+    streamingMetrics.endTime = Date.now();
+    streamingMetrics.streamingDuration = streamingMetrics.endTime - streamingMetrics.startTime;
+    streamingMetrics.averageChunkSize = streamingMetrics.chunksReceived > 0 
+      ? Math.round(streamingMetrics.totalBytes / streamingMetrics.chunksReceived) 
+      : 0;
+    
+    // Log metrics
+    console.log(`[Respond] Streaming metrics:`, {
+      duration: `${streamingMetrics.streamingDuration}ms`,
+      chunksReceived: streamingMetrics.chunksReceived,
+      chunksYielded: streamingMetrics.chunksYielded,
+      batchingReduction: streamingMetrics.chunksReceived > 0 
+        ? `${Math.round((1 - streamingMetrics.chunksYielded / streamingMetrics.chunksReceived) * 100)}%`
+        : '0%',
+      totalBytes: streamingMetrics.totalBytes,
+      averageChunkSize: `${streamingMetrics.averageChunkSize} bytes`
+    });
     
     // If there's remaining thinking content at the end, log it
     if (thinkingBuffer.trim()) {
       logThinking(thinkingBuffer.trim(), 'Chat (Streaming)');
     }
+    
+    // CRITICAL: Always mark generation as complete, even if no content
+    // Initialize variables for completion tracking
+    let toolExecutions: any[] = [];
     
     // If no tokens were streamed (e.g., when using tool calls like 'speak'),
     // get the final content and stream it character by character
@@ -597,11 +763,8 @@ async function* streamThroughGraphWithMemory(
       }
     }
     
-    // Store assistant response via Context MCP (after streaming completes)
-    if (fullContent) {
-      // Retrieve tool executions from Redis state
-      let toolExecutions: any[] = [];
-      if (requestId) {
+    // Retrieve tool executions from Redis state (moved outside fullContent check)
+    if (requestId) {
         const messageState = await red.messageQueue.getMessageState(requestId);
         console.log(`[Respond] Message state for ${requestId}:`, messageState ? 'Found' : 'Not found');
         console.log(`[Respond] Tool events in state:`, messageState?.toolEvents?.length || 0);
@@ -652,60 +815,63 @@ async function* streamThroughGraphWithMemory(
             }
           }
           
-          toolExecutions = Array.from(toolMap.values());
-          console.log(`[Respond] Collected ${toolExecutions.length} tool executions from generation state`);
-        } else {
-          console.log(`[Respond] No tool events found in message state`);
-        }
-      } else {
-        console.log(`[Respond] No requestId provided, cannot retrieve tool executions`);
-      }
-      
-      console.log(`[Respond] About to store message with ${toolExecutions.length} tool executions`);
-      
-      // Store content via MCP for LLM context (already cleaned in streaming/non-streaming paths)
-      await red.callMcpTool('store_message', {
-        conversationId,
-        userId,
-        role: 'assistant',
-        content: fullContent,
-        messageId: assistantMessageId, // Use unique assistant message ID
-        toolExecutions
-      }, { conversationId, generationId, messageId: requestId });
-      
-      // Complete the generation
-      await red.logger.completeGeneration(generationId, {
-        response: fullContent,
-        thinking: thinkingBuffer || undefined,
-        route: (initialState as any).toolAction || 'chat',
-        toolsUsed: (initialState as any).selectedTools,
-        model: defaultNeuronId, // Phase 0: Use neuron ID
-        tokens: finalMessage?.usage_metadata,
-      });
-      
-      // Get message count for title generation via Context MCP
-      const metadataResult = await red.callMcpTool('get_conversation_metadata', {
-        conversationId
-      }, { conversationId, generationId, messageId: requestId });
-      const messageCount = metadataResult.isError ? 0 : JSON.parse(metadataResult.content?.[0]?.text || '{}').messageCount || 0;
-      
-      // Phase 0: Trigger background tasks with model factory function
-      const getModel = async () => {
-        if (!userId) throw new Error('userId required for background tasks');
-        return await red.neuronRegistry.getModel(defaultNeuronId, userId);
-      };
-      
-      // Trigger background summarization (non-blocking)
-      background.summarizeInBackground(conversationId, red.memory, getModel);
-      
-      // Trigger background title generation (non-blocking)
-      background.generateTitleInBackground(conversationId, messageCount, red, userId || '', defaultNeuronId);
-      
-      // Trigger executive summary generation after 3rd+ message (non-blocking)
-      if (messageCount >= 3) {
-        background.generateExecutiveSummaryInBackground(conversationId, red.memory, getModel);
-      }
+      toolExecutions = Array.from(toolMap.values());
+      console.log(`[Respond] Collected ${toolExecutions.length} tool executions from generation state`);
+    } else {
+      console.log(`[Respond] No tool events found in message state`);
     }
+  } else {
+    console.log(`[Respond] No requestId provided, cannot retrieve tool executions`);
+  }
+  
+  console.log(`[Respond] About to store message with ${toolExecutions.length} tool executions, fullContent length: ${fullContent.length}`);
+  
+  // Store content via MCP only if we have content
+  if (fullContent) {
+    await red.callMcpTool('store_message', {
+      conversationId,
+      userId,
+      role: 'assistant',
+      content: fullContent,
+      messageId: assistantMessageId,
+      toolExecutions
+    }, { conversationId, generationId, messageId: requestId });
+  }
+  
+  console.log(`[Respond] About to complete generation ${generationId}`);
+  // CRITICAL: Complete the generation ALWAYS - this clears currentGenerationId
+  await red.logger.completeGeneration(generationId, {
+    response: fullContent || '',
+    thinking: thinkingBuffer || undefined,
+    route: (initialState as any).toolAction || 'chat',
+    toolsUsed: (initialState as any).selectedTools,
+    model: defaultNeuronId,
+    tokens: finalMessage?.usage_metadata,
+  });
+  console.log(`[Respond] Generation ${generationId} marked as complete`);
+  
+  // Get message count for title generation via Context MCP
+  const metadataResult = await red.callMcpTool('get_conversation_metadata', {
+    conversationId
+  }, { conversationId, generationId, messageId: requestId });
+  const messageCount = metadataResult.isError ? 0 : JSON.parse(metadataResult.content?.[0]?.text || '{}').messageCount || 0;
+  
+  // Phase 0: Trigger background tasks with model factory function
+  const getModel = async () => {
+    if (!userId) throw new Error('userId required for background tasks');
+    return await red.neuronRegistry.getModel(defaultNeuronId, userId);
+  };
+  
+  // Trigger background summarization (non-blocking)
+  background.summarizeInBackground(conversationId, red.memory, getModel);
+  
+  // Trigger background title generation (non-blocking)
+  background.generateTitleInBackground(conversationId, messageCount, red, userId || '', defaultNeuronId);
+  
+  // Trigger executive summary generation after 3rd+ message (non-blocking)
+  if (messageCount >= 3) {
+    background.generateExecutiveSummaryInBackground(conversationId, red.memory, getModel);
+  }
     
     // After all chunks are sent, yield the final AIMessage with complete token data
     if (finalMessage) {
@@ -715,5 +881,14 @@ async function* streamThroughGraphWithMemory(
     // Log the failure and mark generation as failed
     await red.logger.failGeneration(generationId, error instanceof Error ? error.message : String(error));
     throw error; // Re-throw to propagate the error
+  } finally {
+    // Clean up stream timeout
+    clearStreamTimeout();
+    
+    // Clean up active stream tracking
+    if (activeStreams.has(generationId)) {
+      activeStreams.delete(generationId);
+      console.log(`[Respond] Cleaned up stream ${generationId} (active: ${activeStreams.size})`);
+    }
   }
 }

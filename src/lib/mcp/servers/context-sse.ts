@@ -93,6 +93,19 @@ export class ContextServerSSE extends McpServerSSE {
       }
     });
 
+    // Pattern matcher tool
+    this.defineTool({
+      name: 'pattern_matcher',
+      description: 'Match user query against predefined patterns for fast routing',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' }
+        },
+        required: ['query']
+      }
+    });
+
     this.capabilities = {
       tools: { listChanged: false }
     };
@@ -146,6 +159,13 @@ export class ContextServerSSE extends McpServerSSE {
           const metadata = await this.memoryManager.getMetadata(args.conversationId as string);
           return {
             content: [{ type: 'text', text: JSON.stringify(metadata || {}) }]
+          };
+
+        case 'pattern_matcher':
+          const { patternMatcher } = await import('../tools/pattern-matcher/index.js');
+          const result = await patternMatcher({ query: args.query as string });
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }]
           };
 
         default:

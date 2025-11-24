@@ -3,7 +3,7 @@ import { InvokeOptions } from '../../index';
 import { routerNode } from "../nodes/router";
 import { plannerNode } from "../nodes/planner";
 import { executorNode } from "../nodes/executor";
-import { responderNode } from "../nodes/responder";
+import { respondNode } from "../nodes/respond";
 import { searchNode } from "../nodes/search";
 import { scrapeNode } from "../nodes/scrape";
 import { commandNode } from "../nodes/command";
@@ -105,41 +105,6 @@ const RedGraphState = Annotation.Root({
     reducer: (x: number, y: number) => y, // Each node can override
     default: () => 1 // Start at 1 (planner/router)
   }),
-  // PLANNER-BASED EXECUTION FIELDS
-  // executionPlan holds the ordered sequence of steps planned by planner node
-  executionPlan: Annotation<ExecutionPlan | undefined>({
-    reducer: (x: ExecutionPlan | undefined, y: ExecutionPlan | undefined) => y,
-    default: () => undefined
-  }),
-  // currentStepIndex points to which step in the plan is executing (0-based)
-  currentStepIndex: Annotation<number>({
-    reducer: (x: number, y: number) => y,
-    default: () => 0
-  }),
-  // requestReplan signals that a node wants the planner to create a new plan
-  requestReplan: Annotation<boolean>({
-    reducer: (x: boolean, y: boolean) => y,
-    default: () => false
-  }),
-  // replanReason explains why replanning was requested
-  replanReason: Annotation<string | undefined>({
-    reducer: (x: string | undefined, y: string | undefined) => y,
-    default: () => undefined
-  }),
-  // replannedCount tracks how many times we've replanned (max 3)
-  replannedCount: Annotation<number>({
-    reducer: (x: number, y: number) => y,
-    default: () => 0
-  }),
-  // commandDomain and commandDetails passed from executor to command node
-  commandDomain: Annotation<'system' | 'api' | 'home' | undefined>({
-    reducer: (x: any, y: any) => y,
-    default: () => undefined
-  }),
-  commandDetails: Annotation<string | undefined>({
-    reducer: (x: string | undefined, y: string | undefined) => y,
-    default: () => undefined
-  }),
   // THREE-TIER ARCHITECTURE FIELDS
   // Precheck (Tier 0: Pattern matching)
   precheckDecision: Annotation<'fastpath' | 'router' | undefined>({
@@ -199,8 +164,57 @@ const RedGraphState = Annotation.Root({
   routerConfidence: Annotation<number | undefined>({
     reducer: (x: number | undefined, y: number | undefined) => y,
     default: () => undefined
+  }),
+  // Universal Node Dynamic Fields (Phase 2.5: Flat state refactoring)
+  // routeDecision is set by router node for conditional edges
+  routeDecision: Annotation<string | undefined>({
+    reducer: (x: string | undefined, y: string | undefined) => y,
+    default: () => undefined
+  }),
+  // Universal Node Data - Container for all node-specific dynamic data
+  // Use this for ANY data that is specific to a node/feature and not truly generic
+  // Examples: executionPlan, currentStep, searchResults, routingDecision, etc.
+  data: Annotation<Record<string, any>>({
+    reducer: (x: Record<string, any>, y: Record<string, any>) => {
+      // Deep merge nested objects so data.executionPlan + data.hasPlan don't overwrite each other
+      return deepMergeData(x, y);
+    },
+    default: () => ({})
+  }),
+  // MCP Registry for universal nodes (Phase 2: Tool execution from config)
+  mcpRegistry: Annotation<any>({
+    reducer: (x: any, y: any) => y
   })
 });
+
+/**
+ * Deep merge for data field reducer
+ * Recursively merges nested objects to preserve all nested fields
+ */
+function deepMergeData(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
+  console.log('[DataReducer] Deep merging data:', {
+    targetKeys: Object.keys(target || {}),
+    sourceKeys: Object.keys(source || {}),
+    targetExecutorFlag: target?.executorAwaitingReturn,
+    sourceExecutorFlag: source?.executorAwaitingReturn
+  });
+  
+  const result = { ...target };
+  
+  for (const key of Object.keys(source)) {
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      // Recursively merge nested objects
+      result[key] = deepMergeData(result[key] || {}, source[key]);
+    } else {
+      // Directly assign primitives, arrays, and null values
+      result[key] = source[key];
+    }
+  }
+  
+  console.log('[DataReducer] Merge result keys:', Object.keys(result), 'executorFlag:', result.executorAwaitingReturn);
+  
+  return result;
+}
 
 type RedGraphStateType = typeof RedGraphState.State;
 
@@ -238,7 +252,7 @@ const redGraphBuilderRouter = new StateGraph(RedGraphState)
   .addNode("search", searchNode)
   .addNode("scrape", scrapeNode)
   .addNode("command", commandNode)
-  .addNode("responder", responderNode)
+  .addNode("respond", respondNode)
   
   // START → precheck
   .addEdge("__start__", "precheck")
@@ -274,7 +288,7 @@ const redGraphBuilderRouter = new StateGraph(RedGraphState)
       return 'planner';
     },
     {
-      "responder": "responder",
+      "respond": "respond",
       "planner": "planner"
     }
   )
@@ -286,13 +300,13 @@ const redGraphBuilderRouter = new StateGraph(RedGraphState)
   .addConditionalEdges(
     "executor",
     (state: RedGraphStateType) => {
-      return state.nextGraph || "responder";
+      return state.nextGraph || "respond";
     },
     {
       "search": "search",
       "scrape": "scrape",
       "command": "command",
-      "responder": "responder"
+      "respond": "respond"
     }
   )
   
@@ -305,7 +319,9 @@ const redGraphBuilderRouter = new StateGraph(RedGraphState)
         return 'search';
       }
       // Check if we have more steps to execute
-      if (state.executionPlan && state.currentStepIndex < state.executionPlan.steps.length) {
+      const plan = state.data?.executionPlan;
+      const stepIndex = state.data?.currentStepIndex || 0;
+      if (plan && stepIndex < plan.steps?.length) {
         return 'executor';
       }
       // Plan complete
@@ -322,7 +338,9 @@ const redGraphBuilderRouter = new StateGraph(RedGraphState)
   .addConditionalEdges(
     "scrape",
     (state: RedGraphStateType) => {
-      if (state.executionPlan && state.currentStepIndex < state.executionPlan.steps.length) {
+      const plan = state.data?.executionPlan;
+      const stepIndex = state.data?.currentStepIndex || 0;
+      if (plan && stepIndex < plan.steps?.length) {
         return 'executor';
       }
       return END;
@@ -337,7 +355,9 @@ const redGraphBuilderRouter = new StateGraph(RedGraphState)
   .addConditionalEdges(
     "command",
     (state: RedGraphStateType) => {
-      if (state.executionPlan && state.currentStepIndex < state.executionPlan.steps.length) {
+      const plan = state.data?.executionPlan;
+      const stepIndex = state.data?.currentStepIndex || 0;
+      if (plan && stepIndex < plan.steps?.length) {
         return 'executor';
       }
       return END;
@@ -350,10 +370,10 @@ const redGraphBuilderRouter = new StateGraph(RedGraphState)
   
   // RESPONDER → [planner (replan) OR END]
   .addConditionalEdges(
-    "responder",
+    "respond",
     (state: RedGraphStateType) => {
       // Check if responder requested replanning
-      if (state.requestReplan && state.replannedCount < 3) {
+      if (state.data?.requestReplan && (state.data?.replannedCount || 0) < 3) {
         return 'planner';
       }
       return END;
@@ -372,14 +392,14 @@ const redGraphBuilderWithPlanner = new StateGraph(RedGraphState)
   .addNode("search", searchNode)        // Web search node
   .addNode("scrape", scrapeNode)        // URL scraping node
   .addNode("command", commandNode)      // Command execution node
-  .addNode("responder", responderNode)  // Final response generation node
+  .addNode("respond", respondNode)  // Final response generation node
   .addEdge("__start__", "contextLoader")
   .addEdge("contextLoader", "planner")
   .addConditionalEdges(
     "planner",
     (state: RedGraphStateType) => {
       // After planning, check if replanning was requested
-      if (state.requestReplan && state.replannedCount < 3) {
+      if (state.data?.requestReplan && (state.data?.replannedCount || 0) < 3) {
         // Exceeded max replans, go to executor anyway
         return "executor";
       }
@@ -394,13 +414,13 @@ const redGraphBuilderWithPlanner = new StateGraph(RedGraphState)
     "executor",
     (state: RedGraphStateType) => {
       // Executor determines which specialized node to run based on current step
-      return state.nextGraph || "responder";
+      return state.nextGraph || "respond";
     },
     {
       "search": "search",
       "scrape": "scrape",
       "command": "command",
-      "responder": "responder"
+      "respond": "respond"
     }
   )
   // After each specialized node, check if we need to continue execution or replan
@@ -413,7 +433,9 @@ const redGraphBuilderWithPlanner = new StateGraph(RedGraphState)
       }
       
       // Check if we have more steps to execute
-      if (state.executionPlan && state.currentStepIndex < state.executionPlan.steps.length) {
+      const plan = state.data?.executionPlan;
+      const stepIndex = state.data?.currentStepIndex || 0;
+      if (plan && stepIndex < plan.steps?.length) {
         return 'executor';  // Continue with next step
       }
       
@@ -430,7 +452,9 @@ const redGraphBuilderWithPlanner = new StateGraph(RedGraphState)
     "scrape",
     (state: RedGraphStateType) => {
       // Check if we have more steps to execute
-      if (state.executionPlan && state.currentStepIndex < state.executionPlan.steps.length) {
+      const plan = state.data?.executionPlan;
+      const stepIndex = state.data?.currentStepIndex || 0;
+      if (plan && stepIndex < plan.steps?.length) {
         return 'executor';
       }
       return END;
@@ -444,7 +468,9 @@ const redGraphBuilderWithPlanner = new StateGraph(RedGraphState)
     "command",
     (state: RedGraphStateType) => {
       // Check if we have more steps to execute
-      if (state.executionPlan && state.currentStepIndex < state.executionPlan.steps.length) {
+      const plan = state.data?.executionPlan;
+      const stepIndex = state.data?.currentStepIndex || 0;
+      if (plan && stepIndex < plan.steps?.length) {
         return 'executor';
       }
       return END;
@@ -455,10 +481,10 @@ const redGraphBuilderWithPlanner = new StateGraph(RedGraphState)
     }
   )
   .addConditionalEdges(
-    "responder",
+    "respond",
     (state: RedGraphStateType) => {
       // Check if responder requested replanning
-      if (state.requestReplan && state.replannedCount < 3) {
+      if (state.data?.requestReplan && (state.data?.replannedCount || 0) < 3) {
         return 'planner';  // Go back to planner for new plan
       }
       // Otherwise, we're done
@@ -477,13 +503,13 @@ const redGraphBuilderWithRouter = new StateGraph(RedGraphState)
   .addNode("search", searchNode)
   .addNode("scrape", scrapeNode)
   .addNode("command", commandNode)
-  .addNode("responder", responderNode)
+  .addNode("respond", respondNode)
   .addEdge("__start__", "contextLoader")
   .addEdge("contextLoader", "router")
   .addConditionalEdges(
     "router",
     (state: RedGraphStateType) => {
-      return state.nextGraph || "responder";
+      return state.nextGraph || "respond";
     },
     {
       "homeGraph": END,
@@ -491,7 +517,7 @@ const redGraphBuilderWithRouter = new StateGraph(RedGraphState)
       "search": "search",
       "scrape": "scrape",
       "command": "command",
-      "responder": "responder",
+      "respond": "respond",
     }
   )
   .addConditionalEdges(
@@ -504,12 +530,13 @@ const redGraphBuilderWithRouter = new StateGraph(RedGraphState)
     },
     {
       "search": "search",
-      "responder": "responder"
+      "respond": "respond"
     }
   )
-  .addEdge("scrape", "responder")
-  .addEdge("command", "responder")
-  .addEdge("responder", END);
+  .addEdge("scrape", "respond")
+  .addEdge("command", "respond")
+  .addEdge("respond", END)
+  .addEdge("respond", END);
 
 // Export RedGraphState for use in graph compiler (Phase 1)
 export { RedGraphState };

@@ -254,6 +254,22 @@ export class ContextServer extends McpServer {
         required: ['userId']
       }
     });
+
+    // Define pattern_matcher tool
+    this.defineTool({
+      name: 'pattern_matcher',
+      description: 'Match user query against predefined patterns for fast routing and classification. Supports exact and fuzzy matching for typos/variations. Use this to quickly classify user intent.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'User query to match against patterns'
+          }
+        },
+        required: ['query']
+      }
+    });
   }
 
   /**
@@ -279,6 +295,8 @@ export class ContextServer extends McpServer {
         return this.getTokenCount(args, meta);
       case 'list_conversations':
         return this.listConversations(args, meta);
+      case 'pattern_matcher':
+        return this.patternMatcher(args, meta);
       default:
         return {
           content: [{
@@ -508,12 +526,17 @@ export class ContextServer extends McpServer {
         }
 
         // Add recent messages
+        console.log('[Context MCP] ===== BUILDING LLM FORMAT MESSAGES =====');
+        console.log('[Context MCP] Recent messages from memory:', recentMessages.length);
         for (const msg of recentMessages) {
+          console.log(`[Context MCP]   Adding: ${msg.role} (id: ${msg.id}) - ${msg.content?.substring(0, 80)}...`);
           llmMessages.push({
+            id: msg.id,
             role: msg.role,
             content: msg.content
           });
         }
+        console.log('[Context MCP] Total LLM messages to return:', llmMessages.length);
 
         return {
           content: [{
@@ -894,6 +917,59 @@ export class ContextServer extends McpServer {
     } catch (error) {
       // Fallback estimate
       return Math.ceil((message.role.length + message.content.length) / 4);
+    }
+  }
+
+  /**
+   * Pattern Matcher - match user query against predefined patterns
+   */
+  private async patternMatcher(
+    args: Record<string, unknown>,
+    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+  ): Promise<CallToolResult> {
+    const query = args.query as string;
+    const publisher = new McpEventPublisher(this.publishRedis, 'context_pattern_matcher', 'Pattern Matcher', meta);
+
+    await publisher.publishStart({ input: { query } });
+
+    try {
+      // Import the pattern matcher function
+      const { patternMatcher } = await import('../tools/pattern-matcher/index.js');
+      
+      const result = await patternMatcher({ query });
+      const duration = publisher.getDuration();
+
+      await publisher.publishLog('info', `Pattern matcher: ${result.matched ? 'matched' : 'no match'}`, {
+        pattern: result.pattern,
+        confidence: result.confidence,
+        category: result.category,
+        duration
+      });
+
+      await publisher.publishComplete({ output: result });
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify(result)
+        }],
+        isError: false
+      };
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const duration = publisher.getDuration();
+      
+      await publisher.publishError(errorMessage);
+      await publisher.publishLog('error', `✗ Pattern matcher failed: ${errorMessage}`, { duration });
+
+      return {
+        content: [{
+          type: 'text',
+          text: errorMessage
+        }],
+        isError: true
+      };
     }
   }
 }

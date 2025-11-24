@@ -47,32 +47,45 @@ export function createConditionFunction(
   return (state: any) => {
     try {
       const result = evaluateExpression(expression, state);
-      
+
+      // Convert result to string for comparison/lookup
+      const resultStr = result === undefined || result === null ? String(result) : String(result);
+
       // If targets provided, return the KEY that matches (not the value)
       // LangGraph's addConditionalEdges expects the condition function to return a key from targetMap
       if (targets && typeof targets === 'object') {
-        const resultStr = String(result);
-        const targetKey = targets[resultStr];
-        if (targetKey) {
-          // Return the KEY (resultStr) so LangGraph can look it up in targetMap
-          console.log(`[ConditionEvaluator] Condition "${expression}" → "${resultStr}" (key) → target: ${targetKey}`);
-          return resultStr;  // Return the KEY, not the value
+        // If resultStr matches a target KEY, return it directly
+        if (Object.prototype.hasOwnProperty.call(targets, resultStr)) {
+          const targetNode = targets[resultStr];
+          console.log(`[ConditionEvaluator] Condition "${expression}" → result: "${resultStr}" (matched key) → target node: ${targetNode}`);
+          return resultStr; // key
         }
-        // Result doesn't match any target, use fallback
+
+        // If resultStr equals a target NODE ID (value), map back to the corresponding key
+        const keyForNode = Object.keys(targets).find(k => String(targets[k]) === resultStr);
+        if (keyForNode) {
+          console.log(`[ConditionEvaluator] Condition "${expression}" → result: "${resultStr}" (matched node id) → mapped key: ${keyForNode}`);
+          return keyForNode;
+        }
+
+        // Result doesn't match any known key or node id, log diagnostic info and use fallback
+        const availableKeys = Object.keys(targets).join(', ');
+        const availableNodes = Object.values(targets).join(', ');
         const fallbackResult = fallback ? '__fallback__' : '__end__';
-        console.log(`[ConditionEvaluator] Condition "${expression}" → "${resultStr}" (no match) → fallback: ${fallbackResult} (${fallback})`);
+        console.warn(`[ConditionEvaluator] Condition "${expression}" → result: "${resultStr}" did not match keys [${availableKeys}] or nodes [${availableNodes}]. Using fallback: ${fallbackResult}`);
         return fallbackResult;
       }
-      
+
       // If result is boolean, use it for branching
       if (typeof result === 'boolean') {
         if (result && targets?.['true']) {
-          return targets['true'];
+          // Note: this branch returns a KEY or fallback depending on targets shape
+          return 'true';
         }
         // No match, use fallback key for LangGraph routing
         return fallback ? '__fallback__' : '__end__';
       }
-      
+
       // No targets map and no boolean - shouldn't happen in valid configs
       // Default to fallback for safety
       return fallback ? '__fallback__' : '__end__';
@@ -94,6 +107,9 @@ function isSafeExpression(expr: string): boolean {
   const safePatterns = [
     // Simple property access: state.field or state.field.nested
     /^state\.\w+(\.\w+)*$/,
+    
+    // Shorthand property access: just field or field.nested (will be auto-prefixed)
+    /^\w+(\.\w+)*$/,
     
     // Comparisons: state.field === 'value'
     /^state\.\w+(\.\w+)* (===|!==|>|<|>=|<=) .+$/,
@@ -125,7 +141,13 @@ function isSafeExpression(expr: string): boolean {
  * Only supports safe, predefined patterns
  */
 function evaluateExpression(expr: string, state: any): any {
-  const trimmed = expr.trim();
+  let trimmed = expr.trim();
+  
+  // Auto-prefix shorthand expressions with 'state.'
+  // If expression doesn't start with 'state.' and is just a property path, add it
+  if (!trimmed.startsWith('state.') && /^\w+(\.\w+)*$/.test(trimmed)) {
+    trimmed = `state.${trimmed}`;
+  }
   
   // Pattern 1: Comparisons (state.field === 'value')
   const comparisonMatch = trimmed.match(/^state\.(\w+(?:\.\w+)*) (===|!==|>|<|>=|<=) (.+)$/);
@@ -188,7 +210,9 @@ function evaluateExpression(expr: string, state: any): any {
   const propMatch = trimmed.match(/^state\.(\w+(?:\.\w+)*)$/);
   if (propMatch) {
     const [, path] = propMatch;
-    return getNestedProperty(state, path);
+    const value = getNestedProperty(state, path);
+    console.log(`[ConditionEvaluator] Simple property access: state.${path} = ${JSON.stringify(value)?.substring(0, 100)}`);
+    return value;
   }
   
   throw new Error(`Unable to parse expression: ${expr}`);
