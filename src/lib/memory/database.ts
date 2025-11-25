@@ -451,9 +451,20 @@ class DatabaseManager {
       },
       $setOnInsert: {
         ...((update.$setOnInsert as any) || {}),
-        createdAt: new Date(),
+        // Only set createdAt if not already in the update object
+        ...((update.$setOnInsert as any)?.createdAt ? {} : { createdAt: new Date() }),
       },
     };
+    
+    // Remove createdAt from $set if it exists to avoid conflict with $setOnInsert
+    if ((updateWithTimestamp.$set as any).createdAt) {
+      delete (updateWithTimestamp.$set as any).createdAt;
+    }
+    
+    // Remove createdAt from $setOnInsert if it's also in $set (though we just removed it from $set, 
+    // this handles the case where the caller provided it in both places incorrectly)
+    // Actually, MongoDB throws error if a field is in both $set and $setOnInsert.
+    // We prioritize $setOnInsert for createdAt.
     
     const result = await col.updateOne(filter, updateWithTimestamp, { upsert });
     return result.modifiedCount > 0 || (upsert && result.upsertedCount > 0);
@@ -643,11 +654,14 @@ class DatabaseManager {
     await this.ensureConnected();
     const conversationsCol = this.getCollection<Conversation>(this.COLLECTIONS.CONVERSATIONS);
     
+    // Remove createdAt from the update object to avoid conflict with $setOnInsert
+    const { createdAt, ...updateData } = conversation as any;
+    
     await conversationsCol.updateOne(
       { conversationId: conversation.conversationId },
       { 
-        $set: { ...conversation, updatedAt: new Date() },
-        $setOnInsert: { createdAt: new Date() }
+        $set: { ...updateData, updatedAt: new Date() },
+        $setOnInsert: { createdAt: createdAt || new Date() }
       },
       { upsert: true }
     );

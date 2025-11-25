@@ -16,6 +16,15 @@ export * from './servers/rag';
 export * from './servers/context';
 export * from './event-publisher';
 
+// Stdio transport exports
+export * from './server-stdio';
+export * from './client-stdio';
+export * from './stdio-pool';
+export * from './servers/web-stdio';
+export * from './servers/system-stdio';
+export * from './servers/rag-stdio';
+export * from './servers/context-stdio';
+
 // Legacy exports for backward compatibility
 export { WebServer as WebSearchServer } from './servers/web';
 export { SystemServer as SystemCommandServer } from './servers/system';

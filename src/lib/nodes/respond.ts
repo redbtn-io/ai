@@ -40,6 +40,11 @@ interface ResponderState {
 }
 
 export const respondNode = async (state: ResponderState): Promise<any> => {
+  console.log('[Responder] ========== NODE ENTRY ==========');
+  console.log('[Responder] State keys:', Object.keys(state));
+  console.log('[Responder] contextMessages present:', !!state.contextMessages, 'length:', state.contextMessages?.length);
+  console.log('[Responder] messages present:', !!state.messages, 'length:', state.messages?.length);
+
   try {
     // Extract node config (injected by compiler if graph node has config)
     const nodeConfig = (state as any).nodeConfig || {};
@@ -144,7 +149,7 @@ CRITICAL RULES:
       // Use pre-loaded context from router (already loaded once)
       if (state.contextMessages && state.contextMessages.length > 0) {
         console.log('[Responder] contextMessages received:', state.contextMessages.length);
-        console.log('[Responder] contextMessages sample:', JSON.stringify(state.contextMessages.slice(0, 3).map(m => ({ role: m.role, contentLen: m.content?.length })), null, 2));
+        console.log('[Responder] contextMessages sample:', JSON.stringify(state.contextMessages.slice(0, 3).map(m => ({ role: m.role, contentLen: m.content?.length, contentPreview: m.content?.substring(0, 20) })), null, 2));
         
         // Filter out the CURRENT user message (it will be added separately)
         const filteredMessages = state.contextMessages.filter((msg: any) => 
@@ -152,6 +157,8 @@ CRITICAL RULES:
         );
         
         initialMessages.push(...filteredMessages);
+      } else {
+        console.warn('[Responder] NO CONTEXT MESSAGES FOUND in state!');
       }
 
       messages = initialMessages;

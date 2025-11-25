@@ -1,18 +1,48 @@
-# MCP over Redis
+# MCP Implementation
 
-A complete implementation of the Model Context Protocol (MCP) using JSON-RPC 2.0 over Redis pub/sub as the transport layer.
+A complete implementation of the Model Context Protocol (MCP) using JSON-RPC 2.0 with **dual transport support**:
+
+1. **Stdio Transport** (Primary) - For internal, tightly-coupled tools
+2. **Redis/HTTP Transport** (Secondary) - For external, distributed tools
 
 ## Overview
 
-This implementation follows the MCP specification with a custom Redis-based transport layer instead of the standard stdio or HTTP transports. This provides:
+This implementation follows the MCP specification with flexible transport layers:
 
-- **Decoupled architecture** - Servers run as independent processes
-- **Scalability** - Multiple clients can connect to the same servers
-- **Reliability** - Redis pub/sub for message delivery
-- **Compatibility with existing infrastructure** - Integrates with your Redis setup
+### Stdio Transport (Internal Tools)
+- **Low latency** - Direct stdin/stdout communication
+- **Integrated lifecycle** - Starts/stops with Red instance
+- **No ports** - No network configuration needed
+- **Ideal for**: Web search, system commands, context management, RAG operations
+
+### Redis/HTTP Transport (External Tools)
+- **Distributed architecture** - Servers run as independent processes
+- **Scalability** - Multiple clients can connect to same servers
+- **Network accessible** - Can be called remotely
+- **Ideal for**: Third-party integrations, microservices, shared tools
 
 ## Architecture
 
+### Stdio Transport (Internal)
+```
+┌─────────────────────────────────────────────┐
+│             Red Instance (Parent)            │
+│                                              │
+│  ┌────────────────────────────────────────┐ │
+│  │      StdioServerPool Manager           │ │
+│  └───┬────────┬─────────┬─────────────┬───┘ │
+│      │        │         │             │     │
+│      ▼        ▼         ▼             ▼     │
+│  ┌─────┐ ┌──────┐ ┌──────┐ ┌─────────┐     │
+│  │ Web │ │System│ │ RAG  │ │ Context │     │
+│  └─────┘ └──────┘ └──────┘ └─────────┘     │
+│   (Child  (Child   (Child    (Child         │
+│  Process) Process) Process)  Process)       │
+└─────────────────────────────────────────────┘
+      │stdin/stdout (JSON-RPC)
+```
+
+### Redis/HTTP Transport (External)
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                      MCP Client                          │
@@ -28,8 +58,8 @@ This implementation follows the MCP specification with a custom Redis-based tran
       │          │          │
       ▼          ▼          ▼
 ┌──────────┐ ┌──────────┐ ┌──────────┐
-│   Web    │ │  System  │ │  Future  │
-│  Server  │ │  Server  │ │  Server  │
+│ External │ │ External │ │ External │
+│ Server 1 │ │ Server 2 │ │ Server 3 │
 └──────────┘ └──────────┘ └──────────┘
 ```
 
@@ -59,25 +89,75 @@ This implementation follows the MCP specification with a custom Redis-based tran
    Server → Client: notifications/tools/list_changed (JSON-RPC notification)
    ```
 
+## Quick Start
+
+### Using Internal Stdio Tools (Automatic)
+
+The Red instance automatically starts stdio servers for all internal tools:
+
+```typescript
+import { Red } from './index';
+
+const red = new Red({
+  redisUrl: 'redis://localhost:6379',
+  vectorDbUrl: 'http://localhost:8024',
+  databaseUrl: 'mongodb://localhost:27017',
+  chatLlmUrl: 'http://localhost:11434',
+  workLlmUrl: 'http://localhost:11434'
+});
+
+// Load starts the stdio server pool automatically
+await red.load();
+
+// Call tools directly - automatically routed to stdio servers
+const searchResult = await red.callMcpTool('web_search', { 
+  query: 'latest AI news',
+  count: 5 
+});
+
+const messageHistory = await red.callMcpTool('get_messages', {
+  conversationId: 'conv_123',
+  limit: 50
+});
+
+// Cleanup - stops stdio servers
+await red.shutdown();
+```
+
+### Adding External HTTP/SSE Servers
+
+For external or distributed tools, use the HTTP/SSE transport:
+
+```typescript
+// Register an external MCP server
+await red.mcpRegistry.registerServer({ 
+  name: 'external-tool',
+  url: 'http://external-server:3000/mcp' 
+});
+
+// Tools from external servers are automatically available
+const result = await red.callMcpTool('external_tool_name', { ...args });
+```
+
 ## Components
 
-### 1. MCP Server (Base Class)
+### 1. Stdio Server (Base Class)
 
-`src/lib/mcp/server.ts` - Abstract base class for all MCP servers
+`src/lib/mcp/server-stdio.ts` - Base class for internal stdio servers
 
 **Key Features:**
-- JSON-RPC 2.0 message handling
-- Tool registration and discovery
-- Capability negotiation
-- Redis pub/sub communication
+- JSON-RPC 2.0 over stdin/stdout
+- Automatic lifecycle management
+- Low-latency communication
+- No network configuration
 
 **Usage:**
 ```typescript
-import { McpServer } from './lib/mcp';
+import { McpServerStdio } from './lib/mcp';
 
-class MyServer extends McpServer {
-  constructor(redis: Redis) {
-    super(redis, 'my-server', '1.0.0');
+class MyServerStdio extends McpServerStdio {
+  constructor() {
+    super('my-server', '1.0.0');
   }
 
   protected async setup(): Promise<void> {

@@ -5,7 +5,10 @@
 import type { Red } from '../index';
 import type { InvokeOptions } from '../index';
 import { redGraph } from '../lib/graphs/red';
+import { SYSTEM_TEMPLATES } from '../lib/types/graph';
 import * as background from './background';
+
+const DEFAULT_GRAPH_ID = SYSTEM_TEMPLATES.DEFAULT;
 
 /**
  * Active streams tracker for memory leak prevention (Pre-Phase 2.5 Part 4)
@@ -67,7 +70,7 @@ export async function respond(
   let accountTier = 4; // Default to FREE tier
   let defaultNeuronId = 'red-neuron';
   let defaultWorkerNeuronId = 'red-neuron';
-  let defaultGraphId = 'assistant-search'; // Phase 2: Dynamic graph system - default to assistant-search
+  let defaultGraphId = DEFAULT_GRAPH_ID; // Phase 2: Dynamic graph system - default to system template
   
   try {
     // Load user settings from MongoDB (Mongoose is already connected via database.ts)
@@ -91,7 +94,7 @@ export async function respond(
       accountTier = user.accountLevel ?? 4;
       defaultNeuronId = user.defaultNeuronId || 'red-neuron';
       defaultWorkerNeuronId = user.defaultWorkerNeuronId || 'red-neuron';
-      defaultGraphId = user.defaultGraphId || 'assistant-search';
+  defaultGraphId = user.defaultGraphId || DEFAULT_GRAPH_ID;
       console.log(`[Respond] Loaded user settings - Tier: ${accountTier}, Graph: ${defaultGraphId}, Neuron: ${defaultNeuronId}`);
     } else {
       console.warn(`[Respond] User ${userId} not found, using FREE tier defaults`);
@@ -131,12 +134,12 @@ export async function respond(
     
     if (isAccessDenied || isNotFound) {
       const reason = isAccessDenied ? 'Access denied' : 'Graph not found';
-      console.warn(`[Respond] ${reason} for graph ${graphId}, falling back to assistant-search`);
-      actualGraphId = 'assistant-search';
+      console.warn(`[Respond] ${reason} for graph ${graphId}, falling back to ${DEFAULT_GRAPH_ID}`);
+      actualGraphId = DEFAULT_GRAPH_ID;
       
       try {
-        compiledGraph = await red.graphRegistry.getGraph('assistant-search', userId);
-        console.log(`[Respond] Using fallback graph: assistant-search (compiled at ${compiledGraph.compiledAt.toISOString()})`);
+        compiledGraph = await red.graphRegistry.getGraph(DEFAULT_GRAPH_ID, userId);
+        console.log(`[Respond] Using fallback graph: ${DEFAULT_GRAPH_ID} (compiled at ${compiledGraph.compiledAt.toISOString()})`);
       } catch (fallbackError) {
         console.error(`[Respond] Failed to load fallback graph:`, fallbackError);
         throw new Error(`Failed to load graph '${graphId}' and fallback failed: ${fallbackError}`);
@@ -201,7 +204,11 @@ export async function respond(
     memory: red.memory,
     messageQueue: red.messageQueue,
     logger: red.logger,
-    mcpClient: red.mcpRegistry,
+    // Wrap Red's callMcpTool in an object to avoid serialization issues
+    mcpClient: {
+      callTool: (toolName: string, args: Record<string, unknown>, meta?: any) => 
+        red.callMcpTool(toolName, args, meta)
+    },
   };
 
   // Inject a system message into the graph state for every respond() call.

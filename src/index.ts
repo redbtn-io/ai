@@ -15,6 +15,7 @@ import { GraphRegistry } from "./lib/graphs/GraphRegistry";
 import * as background from "./functions/background";
 import { respond as respondFunction } from "./functions/respond";
 import { McpRegistry } from "./lib/mcp/registry";
+import { StdioServerPool } from "./lib/mcp/stdio-pool";
 
 // Export database utilities for external use
 export { 
@@ -136,7 +137,8 @@ export class Red {
   public memory!: MemoryManager;
   public messageQueue!: MessageQueue;
   public logger!: PersistentLogger;
-  public mcpRegistry!: McpRegistry;
+  public mcpRegistry!: McpRegistry; // For external HTTP/SSE servers
+  public mcpStdioPool!: StdioServerPool; // For internal stdio servers
   private redis!: any; // Redis client for heartbeat
 
   /**
@@ -163,8 +165,11 @@ export class Red {
     // Initialize logger with MongoDB persistence
     this.logger = new PersistentLogger(redis, this.nodeId || 'default');
     
-    // Initialize MCP registry for tool servers (pass messageQueue for event publishing)
+    // Initialize MCP registry for external HTTP/SSE servers
     this.mcpRegistry = new McpRegistry(this.messageQueue);
+    
+    // Initialize stdio server pool for internal tools
+    this.mcpStdioPool = new StdioServerPool();
   }
 
   // --- Private Internal Methods ---
@@ -228,18 +233,15 @@ export class Red {
     this.baseState = { loadedAt: new Date(), nodeId: this.nodeId };
     this.isLoaded = true;
     
-    // Register MCP servers (SSE transport on different ports)
-    // Note: pattern_matcher tool is now part of context server (port 3004)
+    // Start internal stdio-based MCP servers
     try {
-      await this.mcpRegistry.registerServer({ name: 'web', url: 'http://localhost:3001/mcp' });
-      await this.mcpRegistry.registerServer({ name: 'system', url: 'http://localhost:3002/mcp' });
-      await this.mcpRegistry.registerServer({ name: 'rag', url: 'http://localhost:3003/mcp' });
-      await this.mcpRegistry.registerServer({ name: 'context', url: 'http://localhost:3004/mcp' });
-      const tools = this.mcpRegistry.getAllTools();
-      process.stdout.write(`\r✓ Red AI initialized (${tools.length} MCP tools)\n`);
+      await this.mcpStdioPool.start();
+      const toolsInfo = await this.mcpStdioPool.getAllTools();
+      const totalTools = toolsInfo.reduce((sum, info) => sum + info.tools.length, 0);
+      process.stdout.write(`\r✓ Red AI initialized (${totalTools} MCP tools via stdio)\n`);
     } catch (error) {
-      console.warn('⚠️ MCP server registration failed:', error);
-      console.warn('  Tool calls will fail. Make sure MCP servers are running: npm run mcp:start');
+      console.warn('⚠️ MCP stdio server startup failed:', error);
+      console.warn('  Tool calls may fail. Check server scripts in ai/src/lib/mcp/servers/');
     }
     
     // Start heartbeat to register node as active
@@ -300,12 +302,20 @@ export class Red {
     await background.stopHeartbeat(this.nodeId, this.redis, this.heartbeatInterval);
     this.heartbeatInterval = undefined;
     
-    // Disconnect from MCP servers
+    // Stop stdio MCP servers (kills child processes)
+    try {
+      await this.mcpStdioPool.stop();
+      console.log('[Red] MCP stdio servers stopped');
+    } catch (error) {
+      console.warn('[Red] Error stopping MCP stdio servers:', error);
+    }
+    
+    // Disconnect from external HTTP/SSE MCP servers (if any)
     try {
       await this.mcpRegistry.disconnectAll();
-      console.log('[Red] MCP clients disconnected');
+      console.log('[Red] External MCP clients disconnected');
     } catch (error) {
-      console.warn('[Red] Error disconnecting MCP clients:', error);
+      console.warn('[Red] Error disconnecting external MCP clients:', error);
     }
     
     // Close Redis connection
@@ -350,7 +360,7 @@ export class Red {
 
   /**
    * Call an MCP tool by name with comprehensive logging
-   * Automatically routes to the correct MCP server
+   * Automatically routes to the correct MCP server (stdio or HTTP/SSE)
    * @param toolName The name of the tool to call
    * @param args The arguments to pass to the tool
    * @param context Optional logging context (conversationId, generationId, messageId)
@@ -383,11 +393,8 @@ export class Red {
     });
 
     try {
-      const result = await this.mcpRegistry.callTool(toolName, args, {
-        conversationId: context?.conversationId,
-        generationId: context?.generationId,
-        messageId: context?.messageId
-      });
+      // Try stdio pool first (internal tools)
+      const result = await this.mcpStdioPool.callTool(toolName, args, context);
       const duration = Date.now() - startTime;
 
       // Log success
@@ -404,32 +411,66 @@ export class Red {
           duration,
           isError: result.isError || false,
           resultLength: result.content?.[0]?.text?.length || 0,
-          protocol: 'MCP/JSON-RPC 2.0'
+          protocol: 'MCP/stdio'
         }
       });
 
       return result;
 
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : String(error);
+    } catch (stdioError) {
+      // Log the stdio error for debugging
+      const stdioErrorMsg = stdioError instanceof Error ? stdioError.message : String(stdioError);
+      console.log(`[Red] Stdio tool call failed (${toolName}): ${stdioErrorMsg}, falling back to HTTP/SSE`);
+      
+      // If tool not found in stdio pool, try external HTTP/SSE registry
+      try {
+        const result = await this.mcpRegistry.callTool(toolName, args, {
+          conversationId: context?.conversationId,
+          generationId: context?.generationId,
+          messageId: context?.messageId
+        });
+        const duration = Date.now() - startTime;
 
-      // Log error
-      await this.logger.log({
-        level: 'error',
-        category: 'mcp',
-        message: `✗ MCP Tool Failed: ${toolName} (${duration}ms)`,
-        conversationId: context?.conversationId,
-        generationId: context?.generationId,
-        metadata: {
-          toolName,
-          duration,
-          error: errorMessage,
-          protocol: 'MCP/JSON-RPC 2.0'
-        }
-      });
+        await this.logger.log({
+          level: result.isError ? 'warn' : 'success',
+          category: 'mcp',
+          message: result.isError 
+            ? `⚠️ MCP Tool Error: ${toolName} (${duration}ms)`
+            : `✓ MCP Tool Complete: ${toolName} (${duration}ms)`,
+          conversationId: context?.conversationId,
+          generationId: context?.generationId,
+          metadata: {
+            toolName,
+            duration,
+            isError: result.isError || false,
+            resultLength: result.content?.[0]?.text?.length || 0,
+            protocol: 'MCP/HTTP'
+          }
+        });
 
-      throw error;
+        return result;
+
+      } catch (httpError) {
+        const duration = Date.now() - startTime;
+        const errorMessage = httpError instanceof Error ? httpError.message : String(httpError);
+
+        // Log error
+        await this.logger.log({
+          level: 'error',
+          category: 'mcp',
+          message: `✗ MCP Tool Failed: ${toolName} (${duration}ms)`,
+          conversationId: context?.conversationId,
+          generationId: context?.generationId,
+          metadata: {
+            toolName,
+            duration,
+            error: errorMessage,
+            protocol: 'MCP (all transports)'
+          }
+        });
+
+        throw httpError;
+      }
     }
   }
 
@@ -452,11 +493,29 @@ export class Red {
   }
 
   /**
-   * Get all available MCP tools
+   * Get all available MCP tools (stdio + HTTP/SSE)
    * @returns Array of available tools with their server info
    */
-  public getMcpTools(): Array<{ server: string; tool: any }> {
-    return this.mcpRegistry.getAllTools();
+  public async getMcpTools(): Promise<Array<{ server: string; tools: any[] }>> {
+    // Get stdio tools
+    const stdioTools = await this.mcpStdioPool.getAllTools();
+    
+    // Get HTTP/SSE tools (legacy format conversion)
+    const httpTools = this.mcpRegistry.getAllTools();
+    const httpToolsByServer = httpTools.reduce((acc, item) => {
+      if (!acc[item.server]) {
+        acc[item.server] = [];
+      }
+      acc[item.server].push(item.tool);
+      return acc;
+    }, {} as Record<string, any[]>);
+    
+    const httpToolsArray = Object.entries(httpToolsByServer).map(([server, tools]) => ({
+      server: `${server} (HTTP)`,
+      tools
+    }));
+    
+    return [...stdioTools, ...httpToolsArray];
   }
 
 }

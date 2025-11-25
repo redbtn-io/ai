@@ -88,7 +88,9 @@ async function executeToolInternal(
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         // Call tool via registry (handles server lookup and execution)
+        console.log(`[ToolExecutor] Calling mcpClient.callTool: ${config.toolName}`);
         const result = await mcpClient.callTool(config.toolName, renderedParams, meta);
+        console.log(`[ToolExecutor] mcpClient.callTool returned for ${config.toolName}`);
         
         console.log('[ToolExecutor] Tool call succeeded', {
           toolName: config.toolName,
