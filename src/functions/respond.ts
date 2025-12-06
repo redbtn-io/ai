@@ -4,7 +4,6 @@
 
 import type { Red } from '../index';
 import type { InvokeOptions } from '../index';
-import { redGraph } from '../lib/graphs/red';
 import { SYSTEM_TEMPLATES } from '../lib/types/graph';
 import * as background from './background';
 
@@ -190,17 +189,8 @@ export async function respond(
   
   // Phase 0: Build per-user initial state with neuron system
   const initialState = {
-    query,
-    options: { ...options, conversationId, generationId }, // Add generationId to options
-    messageId: requestId, // Add requestId to state for tool event publishing
-    messages: [{ role: 'user', content: query.message }], // Add initial message for precheck/classifier
-    // Phase 0: Per-user context
-    userId,
-    accountTier,
-    neuronRegistry: red.neuronRegistry,
-    defaultNeuronId,
-    defaultWorkerNeuronId,
     // Infrastructure components
+    neuronRegistry: red.neuronRegistry,
     memory: red.memory,
     messageQueue: red.messageQueue,
     logger: red.logger,
@@ -209,6 +199,17 @@ export async function respond(
       callTool: (toolName: string, args: Record<string, unknown>, meta?: any) => 
         red.callMcpTool(toolName, args, meta)
     },
+    // Universal Node Data - Container for all node-specific dynamic data
+    data: {
+      query,
+      options: { ...options, conversationId, generationId }, // Add generationId to options
+      messageId: requestId, // Add requestId to state for tool event publishing
+      messages: [{ role: 'user', content: query.message }], // Add initial message for precheck/classifier
+      userId,
+      accountTier,
+      defaultNeuronId,
+      defaultWorkerNeuronId,
+    }
   };
 
   // Inject a system message into the graph state for every respond() call.
@@ -228,7 +229,7 @@ CRITICAL RULES:
 7. Be concise and helpful - answer the question directly without extra explanations`;
   // Attach as `systemMessage` so the responder node can use it
   // Tool nodes may override this with their own system messages
-  (initialState as any).systemMessage = SYSTEM_PROMPT;
+  (initialState as any).data.systemMessage = SYSTEM_PROMPT;
 
   // Also inject the current date/time into data so every node can access it
   // This is defensive: some execution paths or node configs may not include the systemMessage
@@ -256,7 +257,8 @@ CRITICAL RULES:
     console.log(`[Respond] Taking NON-STREAMING path`);
     // Phase 1: Invoke the compiled graph and return the full AIMessage
     const result = await compiledGraph.graph.invoke(initialState);
-    const response = result.response;
+    // Support both legacy (result.response) and universal (result.data.response) paths
+    const response = result.data?.response || result.response;
     console.log(`[Respond] Non-streaming: Graph invoked, got response`);
 
     

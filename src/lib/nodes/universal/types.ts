@@ -333,6 +333,13 @@ export interface UniversalStep {
   
   /** Configuration for the step (type depends on step type) */
   config: NeuronStepConfig | ToolStepConfig | TransformStepConfig | ConditionalStepConfig | LoopStepConfig;
+
+  /**
+   * Optional condition to determine if this step should run.
+   * If provided, the step only runs if the condition evaluates to true.
+   * Supports template syntax: "{{state.someField}} == 'someValue'"
+   */
+  condition?: string;
 }
 
 /**

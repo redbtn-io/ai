@@ -7,7 +7,7 @@ import { Redis } from 'ioredis';
 import { McpServer } from '../server';
 import { CallToolResult } from '../types';
 import { McpEventPublisher } from '../event-publisher';
-import { fetchAndParse } from '../../nodes/scrape/parser';
+import { fetchAndParse } from '../../utils/scraper';
 
 export class WebServer extends McpServer {
   private googleApiKey: string;

@@ -18,3 +18,6 @@ dist/
 
 # Ignore packed files
 *.tgz
+
+# Ignore legacy folders
+legacy/

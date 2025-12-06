@@ -121,10 +121,14 @@ export async function executeLoop(
       
       try {
         // Create iteration state with current loop data and metadata
+        // Inject loop metadata into data object
         const iterationState = {
           ...loopState,
-          loopIteration: iteration,
-          loopAccumulator: accumulatorArray
+          data: {
+            ...(loopState.data || {}),
+            loopIteration: iteration,
+            loopAccumulator: accumulatorArray
+          }
         };
         
         // Execute step
@@ -170,8 +174,11 @@ export async function executeLoop(
     try {
       exitConditionMet = evaluateExitCondition(exitCondition, {
         ...loopState,
-        loopIteration: iteration,
-        loopAccumulator: accumulatorArray
+        data: {
+            ...(loopState.data || {}),
+            loopIteration: iteration,
+            loopAccumulator: accumulatorArray
+        }
       });
       
       if (exitConditionMet) {

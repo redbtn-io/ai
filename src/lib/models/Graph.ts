@@ -89,6 +89,27 @@ const graphConfigSchema = new Schema({
 }, { _id: false });
 
 /**
+ * Node layout position schema (for Studio visual editor)
+ */
+const nodePositionSchema = new Schema({
+  x: { type: Number, required: true },
+  y: { type: Number, required: true }
+}, { _id: false });
+
+/**
+ * Share permission schema (for collaborative editing)
+ */
+const sharePermissionSchema = new Schema({
+  userId: { type: String, required: true },
+  permission: { 
+    type: String, 
+    enum: ['view', 'edit'],
+    default: 'view'
+  },
+  sharedAt: { type: Date, default: Date.now }
+}, { _id: false });
+
+/**
  * Main graph schema
  */
 const graphSchema = new Schema<GraphDocument>({
@@ -158,6 +179,38 @@ const graphSchema = new Schema<GraphDocument>({
   config: { 
     type: graphConfigSchema,
     default: {}
+  },
+  
+  // Studio Layout (Phase 3)
+  layout: {
+    type: Map,
+    of: nodePositionSchema,
+    default: {}
+  },
+  thumbnail: {
+    type: String,
+    default: null
+  },
+  
+  // Sharing & Discovery (Phase 3)
+  isPublic: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  forkedFrom: {
+    type: String,
+    default: null,
+    index: true
+  },
+  tags: {
+    type: [String],
+    default: [],
+    index: true
+  },
+  sharedWith: {
+    type: [sharePermissionSchema],
+    default: []
   },
   
   // Metadata

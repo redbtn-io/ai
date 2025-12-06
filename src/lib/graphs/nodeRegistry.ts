@@ -7,17 +7,6 @@
  */
 
 import { GraphNodeType } from '../types/graph';
-import { precheckNode } from '../nodes/precheck';
-import { fastpathExecutorNode } from '../nodes/fastpath';
-import { contextNode } from '../nodes/context';
-import { classifierNode } from '../nodes/classifier';
-import { routerNode } from '../nodes/router';
-import { plannerNode } from '../nodes/planner';
-import { executorNode } from '../nodes/executor';
-import { respondNode } from '../nodes/respond';
-import { searchNode } from '../nodes/search';
-import { scrapeNode } from '../nodes/scrape';
-import { commandNode } from '../nodes/command';
 import { universalNode } from '../nodes/universal/universalNode';
 
 /**
@@ -31,17 +20,17 @@ export type NodeFunction = (state: any) => Promise<any>;
  * This map is used by the graph compiler to build dynamic graphs
  */
 export const NODE_REGISTRY: Record<GraphNodeType, NodeFunction> = {
-  [GraphNodeType.PRECHECK]: precheckNode,
-  [GraphNodeType.FASTPATH]: fastpathExecutorNode,
-  [GraphNodeType.CONTEXT]: contextNode,
-  [GraphNodeType.CLASSIFIER]: classifierNode,
-  [GraphNodeType.ROUTER]: routerNode,
-  [GraphNodeType.PLANNER]: plannerNode,
-  [GraphNodeType.EXECUTOR]: executorNode,
-  [GraphNodeType.RESPONDER]: respondNode,
-  [GraphNodeType.SEARCH]: searchNode,
-  [GraphNodeType.SCRAPE]: scrapeNode,
-  [GraphNodeType.COMMAND]: commandNode,
+  [GraphNodeType.PRECHECK]: universalNode,
+  [GraphNodeType.FASTPATH]: universalNode,
+  [GraphNodeType.CONTEXT]: universalNode,
+  [GraphNodeType.CLASSIFIER]: universalNode,
+  [GraphNodeType.ROUTER]: universalNode,
+  [GraphNodeType.PLANNER]: universalNode,
+  [GraphNodeType.EXECUTOR]: universalNode,
+  [GraphNodeType.RESPONDER]: universalNode,
+  [GraphNodeType.SEARCH]: universalNode,
+  [GraphNodeType.SCRAPE]: universalNode,
+  [GraphNodeType.COMMAND]: universalNode,
   [GraphNodeType.UNIVERSAL]: universalNode
 };
 

@@ -32,6 +32,16 @@ export function executeTransform(
     if (config.inputField) {
       // Get input data from state (handles nested paths)
       inputData = getNestedProperty(state, config.inputField);
+      
+      // Fallback: try data. prefix if not found (migration support)
+      if (inputData === undefined && !config.inputField.startsWith('data.') && !config.inputField.startsWith('state.')) {
+        const dataPath = `data.${config.inputField}`;
+        const dataValue = getNestedProperty(state, dataPath);
+        if (dataValue !== undefined) {
+          console.log(`[TransformExecutor] Legacy field '${config.inputField}' not found, using '${dataPath}' instead`);
+          inputData = dataValue;
+        }
+      }
     }
     
     // Append, build-messages, set, and concat (with fallback) operations allow undefined input
@@ -505,7 +515,17 @@ function executeConcatOperation(
   }
   
   // Get second array from state (handles nested paths)
-  const secondArray = getNestedProperty(state, secondArrayField);
+  let secondArray = getNestedProperty(state, secondArrayField);
+  
+  // Fallback: try data. prefix if not found (migration support)
+  if (secondArray === undefined && !secondArrayField.startsWith('data.') && !secondArrayField.startsWith('state.')) {
+    const dataPath = `data.${secondArrayField}`;
+    const dataValue = getNestedProperty(state, dataPath);
+    if (Array.isArray(dataValue)) {
+      console.log(`[ConcatOperation] Legacy field '${secondArrayField}' not found, using '${dataPath}' instead`);
+      secondArray = dataValue;
+    }
+  }
   
   console.log('[ConcatOperation] Concatenating arrays:', {
     inputField: config.inputField,

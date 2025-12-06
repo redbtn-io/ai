@@ -7,7 +7,7 @@
 
 import { McpServerStdio } from '../server-stdio';
 import { CallToolResult } from '../types';
-import { fetchAndParse } from '../../nodes/scrape/parser';
+import { fetchAndParse } from '../../utils/scraper';
 
 class WebServerStdio extends McpServerStdio {
   private googleApiKey: string;

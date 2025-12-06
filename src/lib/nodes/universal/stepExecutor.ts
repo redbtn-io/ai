@@ -24,6 +24,15 @@ export async function executeStep(
   step: UniversalStep,
   state: any
 ): Promise<Partial<any>> {
+  // Check optional condition
+  if (step.condition) {
+    const shouldRun = evaluateStepCondition(step.condition, state);
+    if (!shouldRun) {
+      // console.log(`[StepExecutor] Skipping step due to condition: ${step.condition}`);
+      return {}; // Skip execution, return empty update
+    }
+  }
+
   switch (step.type) {
     case 'neuron':
       return await executeNeuron(step.config as any, state);
@@ -43,4 +52,20 @@ export async function executeStep(
     default:
       throw new Error(`Unknown step type: ${(step as any).type}`);
   }
+}
+
+function evaluateStepCondition(condition: string, state: any): boolean {
+  const trimmed = condition.trim();
+  if (trimmed.startsWith('{{') && trimmed.endsWith('}}')) {
+    const expression = trimmed.slice(2, -2).trim();
+    try {
+      const evalFunc = new Function('state', `return ${expression}`);
+      return Boolean(evalFunc(state));
+    } catch (error) {
+      console.error('[StepExecutor] Failed to evaluate condition:', expression, error);
+      return false;
+    }
+  }
+  // If not a JS expression, assume false for safety (or implement simple comparison if needed)
+  return false;
 }

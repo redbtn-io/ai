@@ -6,7 +6,6 @@
 // Load environment variables from .env early for library modules
 import 'dotenv/config';
 
-import { redGraph } from "./lib/graphs/red";
 import { MemoryManager } from "./lib/memory/memory";
 import { MessageQueue } from "./lib/memory/queue";
 import { PersistentLogger } from "./lib/logs/persistent-logger";
@@ -48,11 +47,6 @@ export {
   SearchConfig,
   CollectionStats
 } from "./lib/memory/vectors";
-
-export { 
-  addToVectorStoreNode,
-  retrieveFromVectorStoreNode
-} from "./lib/nodes/rag";
 
 // Export MCP (Model Context Protocol) components
 export {

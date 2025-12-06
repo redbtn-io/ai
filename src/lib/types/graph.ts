@@ -99,6 +99,23 @@ export interface GraphGlobalConfig {
 }
 
 /**
+ * Node position for Studio visual layout
+ */
+export interface NodePosition {
+  x: number;
+  y: number;
+}
+
+/**
+ * Share permission for collaborative editing
+ */
+export interface SharePermission {
+  userId: string;
+  permission: 'view' | 'edit';
+  sharedAt?: Date;
+}
+
+/**
  * Complete graph configuration (stored in MongoDB)
  * This is the authoritative source for graph structure and behavior
  */
@@ -139,6 +156,28 @@ export interface GraphConfig {
   
   /** Graph-level configuration options */
   config?: GraphGlobalConfig;
+  
+  // Studio Layout (Phase 3)
+  
+  /** Node positions for visual editor (nodeId → {x, y}) */
+  layout?: Record<string, NodePosition>;
+  
+  /** Base64-encoded thumbnail image for library view */
+  thumbnail?: string;
+  
+  // Sharing & Discovery (Phase 3)
+  
+  /** Whether graph is visible in public library */
+  isPublic?: boolean;
+  
+  /** Original graph ID if this was forked */
+  forkedFrom?: string;
+  
+  /** Tags for categorization and search */
+  tags?: string[];
+  
+  /** Users with shared access */
+  sharedWith?: SharePermission[];
   
   // Metadata
   

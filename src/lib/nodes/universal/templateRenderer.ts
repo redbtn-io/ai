@@ -39,8 +39,21 @@ export function renderTemplate(template: string, state: any): string {
     
     // If value exists, convert to string; otherwise leave template variable as-is
     if (value !== undefined) {
+      if (typeof value === 'object' && value !== null) {
+        return JSON.stringify(value);
+      }
       return String(value);
     } else {
+      // Fallback: try data. prefix (migration support)
+      if (!path.startsWith('data.')) {
+        const dataPath = `data.${path}`;
+        const dataValue = getNestedProperty(state, dataPath);
+        if (dataValue !== undefined) {
+          // console.log(`[TemplateRenderer] Legacy variable 'state.${path}' not found, using 'state.${dataPath}' instead`);
+          return String(dataValue);
+        }
+      }
+
       console.warn(`[TemplateRenderer] Variable not found: state.${path}`);
       return match;  // Return original {{state.xxx}} if not found
     }

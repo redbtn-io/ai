@@ -6,7 +6,7 @@
  */
 
 import type { NeuronStepConfig } from '../types';
-import { renderTemplate } from '../templateRenderer';
+import { renderTemplate, getNestedProperty } from '../templateRenderer';
 import { executeWithErrorHandling } from './errorHandler';
 
 /**
@@ -59,14 +59,16 @@ async function executeNeuronInternal(
     const neuronRegistry = state.neuronRegistry;
     
     // Determine which neuron ID to use
-    const neuronId = config.neuronId || state.defaultNeuronId;
+    const neuronId = config.neuronId || state.defaultNeuronId || state.data?.defaultNeuronId;
     
     if (!neuronId) {
       throw new Error('No neuron available: config.neuronId not set and no default neuron in state');
     }
     
     // Get model instance from registry (returns LangChain BaseChatModel)
-    let model = await neuronRegistry.getModel(neuronId, state.userId);
+    // Support userId at root or in data
+    const userId = state.userId || state.data?.userId;
+    let model = await neuronRegistry.getModel(neuronId, userId);
     
     if (!model) {
       throw new Error(`Failed to get model for neuron: ${neuronId}`);
@@ -87,22 +89,30 @@ async function executeNeuronInternal(
     }
     
     // Check if userPrompt is a reference to an existing messages array
-    // Pattern: {{state.messages}} or {{state.someMessagesField}}
-    const messagesFieldMatch = config.userPrompt.match(/^\{\{state\.(\w+)\}\}$/);
+    // Pattern: {{state.messages}} or {{state.someMessagesField}} or {{state.data.messages}}
+    const messagesFieldMatch = config.userPrompt.match(/^\{\{state\.([\w\.]+)\}\}$/);
     
     let messages: Array<{ role: string; content: string }>;
     
     if (messagesFieldMatch) {
       // User prompt is a direct reference to a messages field (e.g., {{state.messages}})
       const fieldName = messagesFieldMatch[1];
-      const messagesArray = state[fieldName];
+      const messagesArray = getNestedProperty(state, fieldName);
       
       if (Array.isArray(messagesArray)) {
         messages = [...messagesArray]; // Clone array to avoid mutating state
         
-        // If config.systemPrompt is provided, prepend/replace system message
-        if (config.systemPrompt) {
-          const systemPrompt = renderTemplate(config.systemPrompt, state);
+        // If config.systemPrompt is provided or systemPrefix exists, prepend/replace system message
+        if (config.systemPrompt || state.systemPrefix) {
+          let systemPrompt = config.systemPrompt 
+            ? renderTemplate(config.systemPrompt, state)
+            : '';
+            
+          if (state.systemPrefix) {
+            systemPrompt = systemPrompt 
+              ? `${state.systemPrefix}\n\n${systemPrompt}`
+              : state.systemPrefix;
+          }
           
           // Check if first message is already a system message
           if (messages.length > 0 && messages[0].role === 'system') {
@@ -136,9 +146,17 @@ async function executeNeuronInternal(
       }
     } else {
       // Standard template rendering for prompts
-      const systemPrompt = config.systemPrompt 
+      let systemPrompt = config.systemPrompt 
         ? renderTemplate(config.systemPrompt, state)
         : undefined;
+      
+      // Prepend system prefix if available
+      if (state.systemPrefix) {
+        systemPrompt = systemPrompt 
+          ? `${state.systemPrefix}\n\n${systemPrompt}`
+          : state.systemPrefix;
+      }
+
       const userPrompt = renderTemplate(config.userPrompt, state);
       
       console.log('[NeuronExecutor] Building messages from templates', {

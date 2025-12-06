@@ -12,7 +12,7 @@ import { NODE_REGISTRY, isValidNodeType, NodeFunction } from './nodeRegistry';
 import { createConditionFunction } from './conditionEvaluator';
 
 // Import RedGraphState from the static graph file
-import { RedGraphState } from './red';
+import { RedGraphState } from './state';
 
 /**
  * Creates a configurable node wrapper that injects config into the state
@@ -68,6 +68,16 @@ export function compileGraphFromConfig(config: GraphConfig): CompiledGraph {
       : nodeFn;
     
     builder.addNode(node.id, wrappedFn);
+  }
+
+  // Step 3.5: Add global error handler node (if not already present)
+  // This ensures the graph always has a fallback for unhandled errors
+  if (!config.nodes.some(n => n.id === 'error_handler')) {
+    console.log(`[GraphCompiler]   Adding system node: error_handler`);
+    const universalFn = NODE_REGISTRY['universal'];
+    // Create a virtual node config that points to the registry entry
+    const errorHandlerFn = createConfigurableNode(universalFn, { nodeId: 'error_handler' });
+    builder.addNode('error_handler', errorHandlerFn);
   }
   
   // Step 4: Add all edges (simple and conditional)
@@ -219,18 +229,35 @@ function validateGraphConfig(config: GraphConfig): void {
 
 /**
  * Adds a simple edge to the graph builder
+ * Automatically upgrades to conditional edge to handle global error states
  */
 function addSimpleEdge(
   builder: StateGraph<any>, 
   edge: GraphEdgeConfig
 ): void {
   const to = edge.to || END;
-  console.log(`[GraphCompiler]   Adding edge: ${edge.from} → ${to}`);
-  builder.addEdge(edge.from as any, to as any);
+  console.log(`[GraphCompiler]   Adding edge: ${edge.from} → ${to} (with error fallback)`);
+  
+  // Upgrade to conditional edge to handle error_handler transition
+  (builder as any).addConditionalEdges(
+    edge.from as any,
+    (state: any) => {
+      // Check for global error state first
+      if (state.data?.nextGraph === 'error_handler') {
+        return 'error_handler';
+      }
+      return 'default';
+    },
+    {
+      'error_handler': 'error_handler',
+      'default': to as any
+    }
+  );
 }
 
 /**
  * Adds a conditional edge with branching logic to the graph builder
+ * Automatically injects error handling logic
  */
 function addConditionalEdge(
   builder: StateGraph<any>, 
@@ -245,11 +272,19 @@ function addConditionalEdge(
   }
   
   // Build condition function using safe evaluator
-  const conditionFn = createConditionFunction(
+  const originalConditionFn = createConditionFunction(
     edge.condition || '',
     edge.targets || {},
     edge.fallback
   );
+
+  // Wrap condition function to check for error state first
+  const conditionFn = (state: any) => {
+    if (state.data?.nextGraph === 'error_handler') {
+      return 'error_handler';
+    }
+    return originalConditionFn(state);
+  };
   
   // Build target mapping (all possible destinations)
   // LangGraph expects: conditionFn returns KEY → targetMap[KEY] = nodeId
@@ -276,8 +311,11 @@ function addConditionalEdge(
   // Always include __end__ as possible target
   targetMap['__end__'] = END;
   
+  // Add error handler to target map
+  targetMap['error_handler'] = 'error_handler';
+  
   const targetKeys = Object.keys(edge.targets || {});
-  console.log(`[GraphCompiler]   Adding conditional edge: ${edge.from} → [${targetKeys.join(', ')}]`);
+  console.log(`[GraphCompiler]   Adding conditional edge: ${edge.from} → [${targetKeys.join(', ')}] (with error fallback)`);
   // Log the target map for easier diagnostics at runtime
   console.log(`[GraphCompiler]     targetMap keys: ${Object.keys(targetMap).join(', ')}`);
   console.log(`[GraphCompiler]     targetMap nodes: ${Object.values(targetMap).join(', ')}`);

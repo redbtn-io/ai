@@ -13,6 +13,7 @@
 
 import type { UniversalNodeConfig, UniversalStep } from './types';
 import { executeStep } from './stepExecutor';
+import { getNodeSystemPrefix } from '../../utils/node-helpers';
 
 /**
  * Universal node function compatible with NODE_REGISTRY
@@ -69,6 +70,16 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
     nodeConfig = loadedConfig;
     console.log(`[UniversalNode] Loaded config for ${nodeId} (${nodeConfig.steps?.length || 0} steps)`);
   }
+
+  // Generate system prefix for this node execution
+  const currentNodeCount = state.nodeCounter || 1;
+  const nodeName = (nodeConfig as any).name || (nodeConfig as any).nodeId || 'Universal Node';
+  const systemPrefix = getNodeSystemPrefix(currentNodeCount, nodeName);
+  
+  // Inject into state for steps to use (e.g. in neuronExecutor)
+  state.systemPrefix = systemPrefix;
+  
+  console.log(`[UniversalNode] Executing node ${currentNodeCount}: ${nodeName}`);
   
   // Validate configuration
   if (!nodeConfig.steps && (!nodeConfig.type || !nodeConfig.config)) {
@@ -94,7 +105,9 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
   
   
   // Track state updates from all steps (stored at top-level state)
-  const stateUpdates: Record<string, any> = {};
+  const stateUpdates: Record<string, any> = {
+    nodeCounter: currentNodeCount + 1
+  };
   
   // Execute steps sequentially
   for (let i = 0; i < steps.length; i++) {
@@ -166,8 +179,21 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
         console.error(`[UniversalNode] Step config: [contains circular references]`);
       }
       
-      // Throw error with step context
-      throw new Error(errorMessage);
+      // Return error state to trigger fallback
+      // This allows the graph compiler to route to the error_handler node
+      console.log(`[UniversalNode] Triggering error fallback to 'error_handler'`);
+      
+      // Convert flat updates to nested before returning
+      const nestedUpdates = convertFlatToNested(stateUpdates);
+      
+      return {
+        ...nestedUpdates,
+        data: {
+          ...nestedUpdates.data,
+          error: errorMessage,
+          nextGraph: 'error_handler'
+        }
+      };
     }
   }
   
