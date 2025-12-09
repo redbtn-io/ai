@@ -100,9 +100,8 @@ const UniversalNodeConfigSchema = new mongoose.Schema({
 });
 
 // Update timestamp on save
-UniversalNodeConfigSchema.pre('save', function(next) {
+UniversalNodeConfigSchema.pre('save', async function() {
   this.updatedAt = new Date();
-  next();
 });
 
 // Indexes for efficient queries

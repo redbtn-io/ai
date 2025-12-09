@@ -387,7 +387,7 @@ class DatabaseManager {
   async find<T extends Document>(
     collectionName: string,
     filter: Filter<T> = {},
-    options?: FindOptions<T>
+    options?: FindOptions
   ): Promise<T[]> {
     await this.ensureConnected();
     const col = await this.collection<T>(collectionName);

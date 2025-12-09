@@ -75,11 +75,18 @@ async function executeToolInternal(
     });
     
     // Get metadata for tool execution
+    // Note: messageId is in state.data.messageId (set by respond.ts initialState)
     const meta = {
-      conversationId: state.options?.conversationId,
-      generationId: state.options?.generationId,
-      messageId: state.messageId
+      conversationId: state.options?.conversationId || state.data?.options?.conversationId,
+      generationId: state.options?.generationId || state.data?.options?.generationId,
+      messageId: state.messageId || state.data?.messageId
     };
+    
+    console.log('[ToolExecutor] Tool meta for event publishing:', {
+      conversationId: meta.conversationId,
+      messageId: meta.messageId,
+      hasMessageQueue: !!state.messageQueue
+    });
     
     // Execute with retry logic
     const maxRetries = config.retryOnError ? (config.maxRetries ?? 3) : 0;

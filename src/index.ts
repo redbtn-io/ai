@@ -162,8 +162,8 @@ export class Red {
     // Initialize MCP registry for external HTTP/SSE servers
     this.mcpRegistry = new McpRegistry(this.messageQueue);
     
-    // Initialize stdio server pool for internal tools
-    this.mcpStdioPool = new StdioServerPool();
+    // Initialize stdio server pool for internal tools (pass messageQueue for tool event publishing)
+    this.mcpStdioPool = new StdioServerPool(undefined, this.messageQueue);
   }
 
   // --- Private Internal Methods ---

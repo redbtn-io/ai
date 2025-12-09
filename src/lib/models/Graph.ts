@@ -240,7 +240,7 @@ graphSchema.index({ tier: 1 });
 /**
  * Pre-save validation: Ensure node IDs are unique within the graph
  */
-graphSchema.pre('save', function(next) {
+graphSchema.pre('save', async function() {
   const nodeIds = this.nodes.map((n: any) => n.id);
   const uniqueIds = new Set(nodeIds);
   
@@ -248,16 +248,14 @@ graphSchema.pre('save', function(next) {
     const duplicates = nodeIds.filter((id: string, index: number) => 
       nodeIds.indexOf(id) !== index
     );
-    return next(new Error(`Duplicate node IDs found in graph: ${duplicates.join(', ')}`));
+    throw new Error(`Duplicate node IDs found in graph: ${duplicates.join(', ')}`);
   }
-  
-  next();
 });
 
 /**
  * Pre-save validation: Ensure edges reference valid nodes
  */
-graphSchema.pre('save', function(next) {
+graphSchema.pre('save', async function() {
   const nodeIds = new Set(this.nodes.map((n: any) => n.id));
   nodeIds.add('__start__');
   nodeIds.add('__end__');
@@ -265,12 +263,12 @@ graphSchema.pre('save', function(next) {
   for (const edge of this.edges) {
     // Validate 'from' node
     if (!nodeIds.has(edge.from)) {
-      return next(new Error(`Edge references unknown source node: ${edge.from}`));
+      throw new Error(`Edge references unknown source node: ${edge.from}`);
     }
     
     // Validate 'to' node (if specified)
     if (edge.to && !nodeIds.has(edge.to)) {
-      return next(new Error(`Edge references unknown target node: ${edge.to}`));
+      throw new Error(`Edge references unknown target node: ${edge.to}`);
     }
     
     // Validate all target nodes in conditional edges
@@ -279,26 +277,23 @@ graphSchema.pre('save', function(next) {
         // Skip Mongoose internal fields that start with $
         if (key.startsWith('$') || key.startsWith('_')) continue;
         if (typeof target === 'string' && !nodeIds.has(target)) {
-          return next(new Error(`Edge references unknown target node in condition '${key}': ${target}`));
+          throw new Error(`Edge references unknown target node in condition '${key}': ${target}`);
         }
       }
     }
     
     // Validate fallback node
     if (edge.fallback && !nodeIds.has(edge.fallback)) {
-      return next(new Error(`Edge references unknown fallback node: ${edge.fallback}`));
+      throw new Error(`Edge references unknown fallback node: ${edge.fallback}`);
     }
   }
-  
-  next();
 });
 
 /**
  * Pre-save validation: Update timestamp
  */
-graphSchema.pre('save', function(next) {
+graphSchema.pre('save', async function() {
   this.updatedAt = new Date();
-  next();
 });
 
 /**

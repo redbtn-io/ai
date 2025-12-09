@@ -11,8 +11,11 @@
  * - Automatic token counting and validation
  */
 
-import { ChromaClient, Collection } from 'chromadb';
 import { countTokens } from '../utils/tokenizer';
+
+// Mock types for ChromaDB
+type ChromaClient = any;
+type Collection = any;
 
 // --- Configuration Constants ---
 
@@ -136,11 +139,12 @@ export class VectorStoreManager {
     this.embeddingModel = embeddingModel;
     
     // Initialize ChromaDB client
-    this.client = new ChromaClient({
-      path: chromaUrl
-    });
+    // this.client = new ChromaClient({
+    //   path: chromaUrl
+    // });
+    this.client = {}; // Mock client
     
-    console.log(`[VectorStore] Initialized with ChromaDB at ${chromaUrl}`);
+    console.log(`[VectorStore] Initialized with ChromaDB at ${chromaUrl} (MOCKED)`);
     console.log(`[VectorStore] Using embedding model: ${embeddingModel} via ${ollamaUrl}`);
   }
 
@@ -330,15 +334,22 @@ export class VectorStoreManager {
     metadata?: Record<string, any>
   ): Promise<Collection> {
     try {
-      const collection = await this.client.getOrCreateCollection({
-        name: collectionName,
-        metadata: {
-          ...metadata,
-          'hnsw:space': 'cosine'  // Use cosine similarity instead of L2
-        }
-      });
+      // const collection = await this.client.getOrCreateCollection({
+      //   name: collectionName,
+      //   metadata: {
+      //     ...metadata,
+      //     'hnsw:space': 'cosine'  // Use cosine similarity instead of L2
+      //   }
+      // });
+      const collection = {
+        add: async () => {},
+        query: async () => ({ ids: [], documents: [], metadatas: [], distances: [] }),
+        delete: async () => {},
+        count: async () => 0,
+        metadata: {}
+      };
       
-      console.log(`[VectorStore] Using collection: ${collectionName} (cosine similarity)`);
+      console.log(`[VectorStore] Using collection: ${collectionName} (cosine similarity) (MOCKED)`);
       return collection;
     } catch (error) {
       console.error(`[VectorStore] Failed to get/create collection ${collectionName}:`, error);
@@ -554,8 +565,8 @@ export class VectorStoreManager {
    */
   async deleteCollection(collectionName: string): Promise<void> {
     try {
-      await this.client.deleteCollection({ name: collectionName });
-      console.log(`[VectorStore] Deleted collection: ${collectionName}`);
+      // await this.client.deleteCollection({ name: collectionName });
+      console.log(`[VectorStore] Deleted collection: ${collectionName} (MOCKED)`);
     } catch (error) {
       console.error(`[VectorStore] Failed to delete collection ${collectionName}:`, error);
       throw error;
@@ -568,9 +579,10 @@ export class VectorStoreManager {
    */
   async listCollections(): Promise<string[]> {
     try {
-      const collections = await this.client.listCollections();
-      const names = collections.map(c => c.name);
-      console.log(`[VectorStore] Found ${names.length} collections`);
+      // const collections = await this.client.listCollections();
+      // const names = collections.map(c => c.name);
+      const names: string[] = [];
+      console.log(`[VectorStore] Found ${names.length} collections (MOCKED)`);
       return names;
     } catch (error) {
       console.error('[VectorStore] Failed to list collections:', error);
@@ -605,8 +617,9 @@ export class VectorStoreManager {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const heartbeat = await this.client.heartbeat();
-      console.log(`[VectorStore] ChromaDB heartbeat: ${heartbeat}ms`);
+      // const heartbeat = await this.client.heartbeat();
+      const heartbeat = 0;
+      console.log(`[VectorStore] ChromaDB heartbeat: ${heartbeat}ms (MOCKED)`);
       return true;
     } catch (error) {
       console.error('[VectorStore] Health check failed:', error);

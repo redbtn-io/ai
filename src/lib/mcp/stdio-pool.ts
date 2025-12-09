@@ -7,6 +7,7 @@
  */
 
 import { McpClientStdio } from './client-stdio';
+import type { MessageQueue } from '../memory/queue';
 
 export interface StdioServerConfig {
   name: string;
@@ -17,8 +18,11 @@ export interface StdioServerConfig {
 export class StdioServerPool {
   private clients: Map<string, McpClientStdio> = new Map();
   private serverConfigs: StdioServerConfig[];
+  private messageQueue?: MessageQueue;
 
-  constructor(configs?: StdioServerConfig[]) {
+  constructor(configs?: StdioServerConfig[], messageQueue?: MessageQueue) {
+    this.messageQueue = messageQueue;
+    
     // Default configuration for internal servers
     // Paths are relative to the process working directory (where the app is running)
     // In production: node_modules/@redbtn/ai/dist/lib/mcp/servers/
@@ -34,6 +38,13 @@ export class StdioServerPool {
       { name: 'rag', scriptPath: `${basePath}/rag-stdio${ext}`, enabled: true },
       { name: 'context', scriptPath: `${basePath}/context-stdio${ext}`, enabled: true },
     ];
+  }
+  
+  /**
+   * Set the message queue for tool event publishing
+   */
+  setMessageQueue(messageQueue: MessageQueue): void {
+    this.messageQueue = messageQueue;
   }
 
   /**
@@ -135,7 +146,15 @@ export class StdioServerPool {
     args: Record<string, unknown>,
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<any> {
-    console.log(`[MCP Stdio Pool] Looking for tool: ${toolName}`);
+    console.log(`[MCP Stdio Pool] Looking for tool: ${toolName}, meta:`, meta ? { messageId: meta.messageId } : 'none');
+    
+    // Infrastructure tools that shouldn't generate user-visible events
+    const infrastructureTools = [
+      'store_message', 'get_messages', 'get_context_history', 
+      'get_conversation_metadata', 'pattern_matcher',
+      'add_to_vector_store', 'add_document', 'delete_documents'
+    ];
+    const isInfrastructureTool = infrastructureTools.includes(toolName);
     
     // Find which server has this tool
     for (const [serverName, client] of this.clients.entries()) {
@@ -146,6 +165,51 @@ export class StdioServerPool {
         
         if (tool) {
           console.log(`[MCP Stdio Pool] Found ${toolName} on server ${serverName}`);
+          
+          // Publish tool start event if messageId is provided and not infrastructure
+          if (meta?.messageId && this.messageQueue && !isInfrastructureTool) {
+            const toolId = `${toolName}_${Date.now()}`;
+            await this.messageQueue.publishToolEvent(meta.messageId, {
+              type: 'tool_start',
+              toolId,
+              toolType: toolName,
+              toolName,
+              timestamp: Date.now(),
+              metadata: meta
+            });
+            
+            const startTime = Date.now();
+            try {
+              const result = await client.callTool(toolName, args);
+              
+              // Publish tool complete event
+              await this.messageQueue.publishToolEvent(meta.messageId, {
+                type: 'tool_complete',
+                toolId,
+                toolType: toolName,
+                toolName,
+                timestamp: Date.now(),
+                result,
+                metadata: { ...meta, duration: Date.now() - startTime }
+              });
+              
+              return result;
+            } catch (error) {
+              // Publish tool error event
+              await this.messageQueue.publishToolEvent(meta.messageId, {
+                type: 'tool_error',
+                toolId,
+                toolType: toolName,
+                toolName,
+                timestamp: Date.now(),
+                error: error instanceof Error ? error.message : String(error),
+                metadata: { ...meta, duration: Date.now() - startTime }
+              });
+              throw error;
+            }
+          }
+          
+          // No meta or infrastructure tool, just call tool without event publishing
           return await client.callTool(toolName, args);
         }
       } catch (error) {
