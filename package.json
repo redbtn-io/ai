@@ -1,6 +1,6 @@
 {
   "name": "@redbtn/ai",
-  "version": "0.0.1",
+  "version": "0.0.1-alpha",
   "description": "Red AI Library - Graph-based AI agent built on LangChain and LangGraph",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
