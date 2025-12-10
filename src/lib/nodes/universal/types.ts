@@ -358,6 +358,16 @@ export interface UniversalStep {
  */
 export interface UniversalNodeConfig {
   /**
+   * Node identifier (e.g., "router", "search", "respond")
+   */
+  nodeId?: string;
+  
+  /**
+   * Human-readable node name (e.g., "Intelligent Router", "Web Search")
+   */
+  name?: string;
+  
+  /**
    * Multi-step format: Array of steps to execute sequentially
    * Each step can read state from previous steps
    */

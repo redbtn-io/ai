@@ -73,7 +73,8 @@ class DatabaseManager {
 
     this.connectionPromise = (async () => {
       try {
-        console.log('[Database] Connecting to MongoDB via Mongoose...');
+        // Use stderr for logging in MCP stdio context (stdout is reserved for JSON-RPC)
+        console.error('[Database] Connecting to MongoDB via Mongoose...');
         
         await mongoose.connect(this.mongoUrl, {
           serverSelectionTimeoutMS: 5000,
@@ -81,7 +82,7 @@ class DatabaseManager {
         });
         
         this.isConnected = true;
-        console.log('[Database] Connected to MongoDB successfully');
+        console.error('[Database] Connected to MongoDB successfully');
       } catch (error) {
         console.error('[Database] Failed to connect to MongoDB:', error);
         console.error('[Database] Connection string:', this.mongoUrl.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@'));

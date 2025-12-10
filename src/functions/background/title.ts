@@ -54,7 +54,9 @@ export async function generateTitleInBackground(
       return;
     }
     
-    const messages = JSON.parse(messagesResult.content?.[0]?.text || '[]');
+    const messagesData = JSON.parse(messagesResult.content?.[0]?.text || '{}');
+    // Handle both { messages: [...] } format and raw array format
+    const messages = Array.isArray(messagesData) ? messagesData : (messagesData.messages || []);
     const conversationText = messages
       .slice(0, Math.min(6, messages.length)) // Use first 6 messages max
       .map((m: any) => `${m.role.toUpperCase()}: ${m.content}`)

@@ -115,9 +115,7 @@ const sharePermissionSchema = new Schema({
 const graphSchema = new Schema<GraphDocument>({
   graphId: { 
     type: String, 
-    required: true, 
-    unique: true,
-    index: true
+    required: true
   },
   userId: { 
     type: String, 
@@ -140,7 +138,6 @@ const graphSchema = new Schema<GraphDocument>({
   tier: { 
     type: Number, 
     required: true,
-    index: true,
     default: 4, // FREE tier
     validate: {
       validator: (v: number) => v >= 0 && v <= 4,

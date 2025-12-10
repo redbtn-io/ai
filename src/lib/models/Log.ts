@@ -36,7 +36,7 @@ const LogSchema = new Schema<LogDocument>(
     level: { type: String, enum: ['info', 'warn', 'error', 'debug', 'trace'], required: true, index: true },
     category: { type: String, required: true, index: true },
     message: { type: String, required: true },
-    timestamp: { type: Date, required: true, index: true },
+    timestamp: { type: Date, required: true },
     nodeId: String,
     metadata: Schema.Types.Mixed,
   },

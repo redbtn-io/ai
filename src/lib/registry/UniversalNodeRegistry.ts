@@ -24,6 +24,8 @@ class UniversalNodeRegistry {
     
     for (const node of systemNodes) {
       this.cache.set(node.nodeId, {
+        nodeId: node.nodeId,
+        name: node.name,
         steps: node.steps
       });
     }
@@ -50,6 +52,8 @@ class UniversalNodeRegistry {
     }
     
     const config: UniversalNodeConfig = {
+      nodeId: doc.nodeId,
+      name: doc.name,
       steps: doc.steps
     };
     

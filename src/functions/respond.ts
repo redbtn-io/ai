@@ -663,6 +663,16 @@ async function* streamThroughGraphWithMemory(
             // Small delay for smooth streaming effect
             await new Promise(resolve => setTimeout(resolve, 10));
           }
+          
+          // Create synthetic final message for direct responses (so completions route sees it)
+          // This triggers messageQueue.completeGeneration in the webapp
+          if (!finalMessage) {
+            finalMessage = {
+              content: responseContent,
+              response_metadata: { model: defaultNeuronId },
+              usage_metadata: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }
+            } as any;
+          }
         }
       }
     }
