@@ -580,6 +580,39 @@ class DatabaseManager {
   }
 
   // ==========================================================================
+  // GENERIC COLLECTION OPERATIONS (for backward compatibility)
+  // ==========================================================================
+
+  /**
+   * Find a single document by filter (generic collection access)
+   */
+  async findOne<T extends Document = Document>(
+    collectionName: string,
+    filter: Record<string, unknown>
+  ): Promise<T | null> {
+    await this.ensureConnected();
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database not connected');
+    return db.collection<T>(collectionName).findOne(filter as any) as Promise<T | null>;
+  }
+
+  /**
+   * Update a single document by filter (generic collection access)
+   * Returns true if a document was modified
+   */
+  async updateOne(
+    collectionName: string,
+    filter: Record<string, unknown>,
+    update: Record<string, unknown>
+  ): Promise<boolean> {
+    await this.ensureConnected();
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database not connected');
+    const result = await db.collection(collectionName).updateOne(filter as any, update as any);
+    return result.modifiedCount > 0;
+  }
+
+  // ==========================================================================
   // CONNECTION MANAGEMENT
   // ==========================================================================
 
