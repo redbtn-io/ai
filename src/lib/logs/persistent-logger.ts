@@ -206,7 +206,7 @@ export class PersistentLogger extends Logger {
         if (data.tokens) {
           existing.tokensUsed = data.tokens.total || 0;
         }
-        existing.model = data.model;
+        existing.modelName = data.model;
       } else {
         // Create completed entry
         this.generationQueue.set(generationId, {
@@ -214,7 +214,7 @@ export class PersistentLogger extends Logger {
           conversationId: '',
           status: 'completed',
           nodeId: this.nodeId,
-          model: data.model,
+          modelName: data.model,
           startTime: new Date(),
           endTime: new Date(),
           duration: 0,

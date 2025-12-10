@@ -18,7 +18,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { LRUCache } from "lru-cache";
-import { DatabaseManager } from "../memory/database";
+import { getDatabase, DatabaseManager } from "../memory/database";
 import Neuron from "../models/Neuron";
 import { NeuronConfig, NeuronDocument } from "../types/neuron";
 import type { RedConfig } from "../../index";
@@ -57,7 +57,8 @@ export class NeuronRegistry {
   
   constructor(config: RedConfig) {
     this.config = config;
-    this.db = new DatabaseManager(config.databaseUrl);
+    // Use shared database singleton instead of creating a new instance
+    this.db = getDatabase(config.databaseUrl);
     
     // LRU cache for neuron configs (5 minute TTL)
     this.configCache = new LRUCache<string, NeuronConfig>({

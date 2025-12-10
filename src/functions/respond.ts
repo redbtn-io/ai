@@ -643,6 +643,28 @@ async function* streamThroughGraphWithMemory(
           finalMessage = generations[0][0].message;
         }
       }
+      
+      // CRITICAL: Capture direct response from graph state when it finishes
+      // This handles the case where respond node uses a directResponse (no LLM stream)
+      // The final event is "LangGraph" not "__end__"
+      if (event.event === "on_chain_end" && event.name === "LangGraph") {
+        const graphOutput = event.data?.output;
+        // Check if response exists and has content, and we haven't streamed anything yet
+        const responseContent = graphOutput?.data?.response?.content || graphOutput?.data?.response;
+        if (responseContent && typeof responseContent === 'string' && !streamedTokens) {
+          // Direct response path - stream the pre-generated content
+          console.log(`[Respond] Direct response detected, streaming ${responseContent.length} chars`);
+          
+          // Stream the content character by character for consistent UX
+          for (const char of responseContent) {
+            fullContent += char;
+            streamedTokens = true;
+            yield char;
+            // Small delay for smooth streaming effect
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+        }
+      }
     }
     
     // CRITICAL: Flush remaining pending buffer (last 8 chars or less)

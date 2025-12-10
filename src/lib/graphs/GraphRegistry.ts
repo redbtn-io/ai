@@ -14,7 +14,7 @@
  */
 
 import { LRUCache } from "lru-cache";
-import { DatabaseManager } from "../memory/database";
+import { getDatabase, DatabaseManager } from "../memory/database";
 import { Graph, GraphDocument } from "../models/Graph";
 import { GraphConfig, CompiledGraph } from "../types/graph";
 import { compileGraphFromConfig, GraphCompilationError } from "./compiler";
@@ -48,7 +48,8 @@ export class GraphRegistry {
   
   constructor(config: RedConfig) {
     this.config = config;
-    this.db = new DatabaseManager(config.databaseUrl);
+    // Use shared database singleton instead of creating a new instance
+    this.db = getDatabase(config.databaseUrl);
     
     // Cache compiled graphs (expensive to compile)
     this.compiledCache = new LRUCache<string, CompiledGraph>({
