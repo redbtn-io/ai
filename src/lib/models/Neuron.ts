@@ -23,9 +23,42 @@ const neuronSchema = new Schema<NeuronDocument>(
       required: true,
       index: true
     },
+    creatorId: {
+      type: String,
+      index: true
+    },
+    status: {
+      type: String,
+      enum: ['active', 'abandoned', 'deleted'],
+      default: 'active',
+      index: true
+    },
+    abandonedAt: {
+      type: Date,
+      default: null
+    },
+    scheduledDeletionAt: {
+      type: Date,
+      default: null,
+      index: true
+    },
     isDefault: {
       type: Boolean,
       default: false,
+      index: true
+    },
+    isSystem: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    isImmutable: {
+      type: Boolean,
+      default: false
+    },
+    parentNeuronId: {
+      type: String,
+      default: null,
       index: true
     },
     name: {

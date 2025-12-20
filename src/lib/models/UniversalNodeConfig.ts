@@ -10,6 +10,8 @@
 export {
   NodeModel as UniversalNodeConfigModel,
   getNodeConfig as getUniversalNodeConfig,
+  getNodeConfigForUser,
+  cloneNodeForUser,
   listSystemNodes as listSystemUniversalNodes,
   listUserNodes as listUserUniversalNodes,
   saveNodeConfig as saveUniversalNodeConfig,

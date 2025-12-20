@@ -25,4 +25,26 @@ export { default as Thought, Thought as ThoughtModel } from './Thought';
 export type { IThought, ThoughtDocument } from './Thought';
 
 // Node model
-export { NodeModel, getNodeConfig, saveNodeConfig } from './Node';
+export { 
+  NodeModel, 
+  getNodeConfig, 
+  saveNodeConfig,
+  searchNodes,
+  getAllTags,
+  recordNodeUsage,
+  cloneNodeForUser,
+  getNodeConfigForUser,
+  listSystemNodes,
+  listUserNodes,
+  // Parameter system
+  validateParameterValue,
+  validateParameters,
+  resolveParameters,
+  parametersMapToObject
+} from './Node';
+export type { 
+  NodeSearchOptions,
+  ParameterDefinition,
+  NodeParameters,
+  ResolvedParameters 
+} from './Node';

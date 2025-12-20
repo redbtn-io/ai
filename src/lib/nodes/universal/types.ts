@@ -343,6 +343,49 @@ export interface UniversalStep {
 }
 
 /**
+ * Parameter Definition for Node
+ * Defines an exposed parameter that can be customized at the graph level
+ */
+export interface ParameterDefinition {
+  /** Parameter value type */
+  type: 'string' | 'number' | 'boolean' | 'select' | 'json';
+  
+  /** Default value (used when graph doesn't override) */
+  default: any;
+  
+  /** Human-readable description */
+  description?: string;
+  
+  /** For number type: minimum value */
+  min?: number | null;
+  
+  /** For number type: maximum value */
+  max?: number | null;
+  
+  /** For select type: allowed values */
+  enum?: any[] | null;
+  
+  /** Whether this parameter is required (no default fallback) */
+  required?: boolean;
+  
+  /** Which step index this parameter applies to (for UI hints) */
+  stepIndex?: number | null;
+  
+  /** The path within step config where this parameter is used */
+  configPath?: string | null;
+}
+
+/**
+ * Map of parameter name to definition
+ */
+export type NodeParameters = Record<string, ParameterDefinition>;
+
+/**
+ * Resolved parameter values (merged defaults + overrides)
+ */
+export type ResolvedParameters = Record<string, any>;
+
+/**
  * Universal Node Configuration
  * 
  * Supports two formats:
@@ -355,6 +398,11 @@ export interface UniversalStep {
  * 
  * Multi-step nodes execute steps sequentially, with each step able to access
  * state fields set by previous steps.
+ * 
+ * Parameters System:
+ * - Node defines `parameters` schema (exposed customizable values)
+ * - Graph can override via `config.parameters: { temperature: 0.3 }`
+ * - At runtime, parameters are merged and available as {{parameters.xxx}}
  */
 export interface UniversalNodeConfig {
   /**
@@ -384,4 +432,22 @@ export interface UniversalNodeConfig {
    * Use this for simple single-operation nodes
    */
   config?: NeuronStepConfig | ToolStepConfig | TransformStepConfig | ConditionalStepConfig | LoopStepConfig;
+  
+  /**
+   * Exposed parameters schema
+   * Defines what values can be customized at the graph level
+   * 
+   * Example:
+   * {
+   *   temperature: { type: 'number', default: 0.7, min: 0, max: 2 },
+   *   model: { type: 'select', default: 'gpt-4', enum: ['gpt-4', 'gpt-3.5'] }
+   * }
+   */
+  parameters?: NodeParameters;
+  
+  /**
+   * Resolved parameter values (set at runtime after merging defaults + graph overrides)
+   * Available in templates as {{parameters.xxx}}
+   */
+  resolvedParameters?: ResolvedParameters;
 }

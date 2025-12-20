@@ -6,14 +6,26 @@
  * - Executing steps sequentially
  * - Accumulating state updates across steps
  * - Error handling with step context
+ * - Parameter resolution (merging node defaults with graph overrides)
  * 
  * Universal nodes can have 1-N steps that execute in order, with each step
  * able to read state fields set by previous steps.
+ * 
+ * Parameters System:
+ * - Nodes define exposed parameters with defaults in their config
+ * - Graphs can override parameters via nodeConfig.parameters
+ * - Resolved parameters are available as {{parameters.xxx}} in templates
  */
 
-import type { UniversalNodeConfig, UniversalStep } from './types';
+import type { UniversalNodeConfig, UniversalStep, ResolvedParameters } from './types';
 import { executeStep } from './stepExecutor';
 import { getNodeSystemPrefix } from '../../utils/node-helpers';
+import { 
+  resolveParameters, 
+  validateParameters, 
+  parametersMapToObject,
+  type NodeParameters 
+} from '../../models/Node';
 
 /**
  * Universal node function compatible with NODE_REGISTRY
@@ -25,12 +37,20 @@ import { getNodeSystemPrefix } from '../../utils/node-helpers';
  * 1. Legacy: Full config with steps embedded (for backward compatibility)
  * 2. Registry: nodeId reference to load config from MongoDB (new approach)
  * 
+ * Parameters:
+ * - Graph can pass parameters: { nodeId: "router", parameters: { temperature: 0.3 } }
+ * - These are merged with node's default parameters
+ * - Available in templates as {{parameters.temperature}}
+ * 
  * @param state - Graph state with nodeConfig injected by compiler
  * @returns Partial state with updates from all executed steps
  */
 export const universalNode = async (state: any): Promise<Partial<any>> => {
   // Extract node config (injected by compiler)
   let nodeConfig: UniversalNodeConfig = (state as any).nodeConfig || {};
+  
+  // Extract graph-level parameter overrides (passed from graph node config)
+  const graphParameters: ResolvedParameters = (nodeConfig as any).parameters || {};
   
   // Check if this is a nodeId reference (registry mode)
   if ((nodeConfig as any).nodeId && !(nodeConfig as any).steps) {
@@ -58,12 +78,35 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
     }
     
     // Import registry dynamically to avoid circular dependencies
-    const { getUniversalNode } = await import('../../registry/UniversalNodeRegistry');
+    const { getUniversalNode, getUniversalNodeRaw } = await import('../../registry/UniversalNodeRegistry');
     
     // Load full config from MongoDB
     const loadedConfig = await getUniversalNode(nodeId);
     if (!loadedConfig) {
       throw new Error(`[UniversalNode] Config not found in registry: ${nodeId}`);
+    }
+    
+    // Also load raw config to get parameter definitions
+    const rawNode = await getUniversalNodeRaw(nodeId);
+    
+    // Process parameters if node has parameter definitions
+    if (rawNode?.parameters) {
+      const parameterDefs: NodeParameters = parametersMapToObject(rawNode.parameters);
+      
+      // Validate graph-provided parameters
+      const validationErrors = validateParameters(graphParameters, parameterDefs);
+      if (validationErrors.length > 0) {
+        console.warn(`[UniversalNode] Parameter validation warnings for ${nodeId}:`, validationErrors);
+        // Don't throw - just warn and continue with valid values
+      }
+      
+      // Resolve parameters (merge defaults with graph overrides)
+      const resolvedParams = resolveParameters(parameterDefs, graphParameters);
+      
+      console.log(`[UniversalNode] Resolved parameters for ${nodeId}:`, resolvedParams);
+      
+      // Attach resolved parameters to config for use in templates
+      loadedConfig.resolvedParameters = resolvedParams;
     }
     
     // Use the loaded config directly (registry already formats it correctly)
@@ -78,6 +121,11 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
   
   // Inject into state for steps to use (e.g. in neuronExecutor)
   state.systemPrefix = systemPrefix;
+  
+  // Inject resolved parameters into state for template rendering
+  if (nodeConfig.resolvedParameters) {
+    state.parameters = nodeConfig.resolvedParameters;
+  }
   
   console.log(`[UniversalNode] Executing node ${currentNodeCount}: ${nodeName}`);
   

@@ -128,6 +128,20 @@ const graphSchema = new Schema<GraphDocument>({
     default: false,
     index: true
   },
+  isSystem: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  isImmutable: {
+    type: Boolean,
+    default: false
+  },
+  parentGraphId: {
+    type: String,
+    default: null,
+    index: true
+  },
   name: { 
     type: String, 
     required: true 

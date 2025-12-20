@@ -53,8 +53,26 @@ export interface GraphNodeConfig {
   /** Optional neuron override for this specific node (null = use user default) */
   neuronId?: string | null;
   
-  /** Node-specific configuration options */
-  config?: Record<string, any>;
+  /** 
+   * Node-specific configuration options
+   * For universal nodes, this should include:
+   * - nodeId: string - The universal node to use
+   * - parameters?: Record<string, any> - Parameter overrides for this node instance
+   * 
+   * Example:
+   * {
+   *   nodeId: "router",
+   *   parameters: {
+   *     temperature: 0.3,
+   *     fallbackDecision: "respond"
+   *   }
+   * }
+   */
+  config?: {
+    nodeId?: string;
+    parameters?: Record<string, any>;
+    [key: string]: any;
+  };
 }
 
 /**
@@ -128,6 +146,15 @@ export interface GraphConfig {
   
   /** True for system-provided template graphs */
   isDefault: boolean;
+  
+  /** True for protected system graphs */
+  isSystem?: boolean;
+  
+  /** True if graph cannot be edited directly (must be forked) */
+  isImmutable?: boolean;
+  
+  /** Parent graph ID if this is a fork/clone */
+  parentGraphId?: string;
   
   /** Display name for UI presentation */
   name: string;

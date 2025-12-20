@@ -42,7 +42,14 @@ export interface NeuronDocument {
   _id?: any;                     // MongoDB ObjectId
   neuronId: string;              // Unique identifier (indexed)
   userId: string;                // Owner ("system" for defaults)
+  creatorId?: string;            // Original creator ID (for tracking abandoned nodes)
+  status?: 'active' | 'abandoned' | 'deleted';  // Node lifecycle status
+  abandonedAt?: Date | null;     // When the node was abandoned
+  scheduledDeletionAt?: Date | null;  // When the node will be hard deleted
   isDefault: boolean;            // true for system defaults
+  isSystem?: boolean;            // true for protected system neurons
+  isImmutable?: boolean;         // true if node cannot be edited directly
+  parentNeuronId?: string;       // Source neuron if this is a clone/fork
   name: string;                  // Display name
   description?: string;          // User-facing description
   provider: NeuronProvider;      // LLM provider

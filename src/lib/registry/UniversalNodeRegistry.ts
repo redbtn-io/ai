@@ -3,13 +3,18 @@
  * 
  * Loads and caches universal node configurations from MongoDB.
  * Replaces static TypeScript imports with dynamic database lookups.
+ * 
+ * Supports user-aware resolution:
+ * 1. User's own node (clone or custom) takes priority
+ * 2. Falls back to system node
  */
 
-import { getUniversalNodeConfig, listSystemUniversalNodes } from '../models/UniversalNodeConfig';
+import { getUniversalNodeConfig, listSystemUniversalNodes, getNodeConfigForUser } from '../models/UniversalNodeConfig';
 import type { UniversalNodeConfig } from '../nodes/universal/types';
 
 class UniversalNodeRegistry {
   private cache: Map<string, UniversalNodeConfig> = new Map();
+  private userCache: Map<string, UniversalNodeConfig> = new Map(); // key: userId:nodeId
   private initialized = false;
   
   /**
@@ -35,7 +40,7 @@ class UniversalNodeRegistry {
   }
   
   /**
-   * Get a universal node config by ID
+   * Get a universal node config by ID (system nodes only, for backwards compatibility)
    * Checks cache first, then database
    */
   async get(nodeId: string): Promise<UniversalNodeConfig | null> {
@@ -64,6 +69,47 @@ class UniversalNodeRegistry {
   }
   
   /**
+   * Get a universal node config with user priority resolution
+   * 
+   * Resolution order:
+   * 1. User's own node (clone or custom)
+   * 2. System node
+   * 
+   * @param nodeId The node identifier
+   * @param userId The user ID for priority resolution
+   */
+  async getForUser(nodeId: string, userId: string): Promise<UniversalNodeConfig | null> {
+    const userCacheKey = `${userId}:${nodeId}`;
+    
+    // Check user-specific cache first
+    if (this.userCache.has(userCacheKey)) {
+      return this.userCache.get(userCacheKey)!;
+    }
+    
+    // Load from database with user priority
+    const doc = await getNodeConfigForUser(nodeId, userId);
+    
+    if (!doc) {
+      return null;
+    }
+    
+    const config: UniversalNodeConfig = {
+      nodeId: doc.nodeId,
+      name: doc.name,
+      steps: doc.steps
+    };
+    
+    // Cache based on whether it's user-specific or system
+    if (doc.userId === userId && !doc.isSystem) {
+      this.userCache.set(userCacheKey, config);
+    } else {
+      this.cache.set(nodeId, config);
+    }
+    
+    return config;
+  }
+  
+  /**
    * Check if a node exists
    */
   async has(nodeId: string): Promise<boolean> {
@@ -78,11 +124,23 @@ class UniversalNodeRegistry {
   /**
    * Invalidate cache (useful after updates)
    */
-  invalidate(nodeId?: string): void {
-    if (nodeId) {
+  invalidate(nodeId?: string, userId?: string): void {
+    if (nodeId && userId) {
+      // Invalidate specific user's node
+      this.userCache.delete(`${userId}:${nodeId}`);
+    } else if (nodeId) {
+      // Invalidate system node and all user versions
       this.cache.delete(nodeId);
+      // Also clear any user-cached versions of this node
+      for (const key of this.userCache.keys()) {
+        if (key.endsWith(`:${nodeId}`)) {
+          this.userCache.delete(key);
+        }
+      }
     } else {
+      // Clear everything
       this.cache.clear();
+      this.userCache.clear();
       this.initialized = false;
     }
   }
@@ -105,4 +163,12 @@ export const universalNodeRegistry = new UniversalNodeRegistry();
 export async function getUniversalNode(nodeId: string): Promise<UniversalNodeConfig | null> {
   await universalNodeRegistry.initialize();
   return universalNodeRegistry.get(nodeId);
+}
+
+/**
+ * Helper function to get the raw node document from MongoDB
+ * Used to access parameter definitions and other metadata not in UniversalNodeConfig
+ */
+export async function getUniversalNodeRaw(nodeId: string): Promise<any | null> {
+  return getUniversalNodeConfig(nodeId);
 }

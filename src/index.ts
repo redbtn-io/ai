@@ -79,6 +79,21 @@ export {
 export { GraphConfig, GraphNodeConfig, GraphEdgeConfig, CompiledGraph, GraphNodeType } from "./lib/types/graph";
 export { Graph, GraphDocument } from "./lib/models/Graph";
 
+// Export Node model and utilities
+export {
+  NodeModel,
+  getNodeConfig,
+  saveNodeConfig,
+  searchNodes,
+  getAllTags,
+  recordNodeUsage,
+  cloneNodeForUser,
+  getNodeConfigForUser,
+  listSystemNodes,
+  listUserNodes
+} from "./lib/models/Node";
+export type { NodeSearchOptions } from "./lib/models/Node";
+
 // --- Type Definitions ---
 
 /**

@@ -5,8 +5,8 @@
  * them with actual values from the state object.
  * 
  * Supports:
- * - Simple fields: {{state.query}}
- * - Nested paths: {{state.user.name}}
+ * - State fields: {{state.query}}, {{state.user.name}}
+ * - Parameters: {{parameters.temperature}}, {{parameters.model}}
  * - Multiple variables in same string
  * - Undefined variables are left as-is (not replaced)
  * 
@@ -14,6 +14,9 @@
  * 
  * renderTemplate("Hello {{state.user.name}}", { user: { name: "Alice" } })
  * // Returns: "Hello Alice"
+ * 
+ * renderTemplate("Temp: {{parameters.temperature}}", { parameters: { temperature: 0.7 } })
+ * // Returns: "Temp: 0.7"
  * 
  * renderTemplate("Search: {{state.query}}", { query: "TypeScript" })
  * // Returns: "Search: TypeScript"
@@ -23,17 +26,33 @@
  */
 
 /**
- * Render a template string by replacing {{state.field}} variables with actual values
+ * Render a template string by replacing {{state.field}} and {{parameters.field}} variables
  * 
  * Supports nested property access via dot notation.
  * 
- * @param template - Template string with {{state.field}} placeholders
- * @param state - State object containing values to substitute
+ * @param template - Template string with {{state.field}} or {{parameters.field}} placeholders
+ * @param state - State object containing values to substitute (includes parameters)
  * @returns Rendered string with variables replaced
  */
 export function renderTemplate(template: string, state: any): string {
-  // Match all {{state.xxx}} patterns (supports nested paths like state.user.name)
-  return template.replace(/\{\{state\.(\w+(?:\.\w+)*)\}\}/g, (match, path) => {
+  // First, replace {{parameters.xxx}} patterns
+  let result = template.replace(/\{\{parameters\.(\w+(?:\.\w+)*)\}\}/g, (match, path) => {
+    // Get value from state.parameters
+    const value = getNestedProperty(state.parameters || {}, path);
+    
+    if (value !== undefined) {
+      if (typeof value === 'object' && value !== null) {
+        return JSON.stringify(value);
+      }
+      return String(value);
+    } else {
+      console.warn(`[TemplateRenderer] Parameter not found: parameters.${path}`);
+      return match;  // Return original {{parameters.xxx}} if not found
+    }
+  });
+  
+  // Then, replace {{state.xxx}} patterns (supports nested paths like state.user.name)
+  result = result.replace(/\{\{state\.(\w+(?:\.\w+)*)\}\}/g, (match, path) => {
     // Get value from state (handles nested paths)
     const value = getNestedProperty(state, path);
     
@@ -58,19 +77,22 @@ export function renderTemplate(template: string, state: any): string {
       return match;  // Return original {{state.xxx}} if not found
     }
   });
+  
+  return result;
 }
 
 /**
  * Render parameters object by replacing template variables in all string values
  * 
  * Used for tool parameters where multiple fields may contain template variables.
+ * Supports both {{state.xxx}} and {{parameters.xxx}} syntax.
  * 
  * Example:
  * renderParameters(
- *   { query: "{{state.search}}", maxResults: 5, userId: "{{state.user.id}}" },
- *   { search: "TypeScript", user: { id: "123" } }
+ *   { query: "{{state.search}}", temp: "{{parameters.temperature}}", maxResults: 5 },
+ *   { search: "TypeScript", parameters: { temperature: 0.7 } }
  * )
- * // Returns: { query: "TypeScript", maxResults: 5, userId: "123" }
+ * // Returns: { query: "TypeScript", temp: "0.7", maxResults: 5 }
  * 
  * @param parameters - Object with potentially templated string values
  * @param state - State object containing values to substitute
@@ -83,7 +105,7 @@ export function renderParameters(
   const rendered: Record<string, any> = {};
   
   for (const [key, value] of Object.entries(parameters)) {
-    if (typeof value === 'string' && value.includes('{{state.')) {
+    if (typeof value === 'string' && (value.includes('{{state.') || value.includes('{{parameters.'))) {
       // Render template if it contains variables
       rendered[key] = renderTemplate(value, state);
     } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
@@ -125,27 +147,28 @@ export function getNestedProperty(obj: any, path: string): any {
  * Check if a string contains any template variables
  * 
  * Useful for optimization - skip rendering if no variables present.
+ * Checks for both {{state.xxx}} and {{parameters.xxx}} patterns.
  * 
  * @param str - String to check
- * @returns True if string contains {{state.xxx}} patterns
+ * @returns True if string contains template patterns
  */
 export function hasTemplateVariables(str: string): boolean {
-  return /\{\{state\.\w+(?:\.\w+)*\}\}/.test(str);
+  return /\{\{(state|parameters)\.\w+(?:\.\w+)*\}\}/.test(str);
 }
 
 /**
  * Extract all template variable names from a string
  * 
- * Useful for validation - check if all required state fields are present.
+ * Useful for validation - check if all required state/parameter fields are present.
  * 
  * Example:
- * extractTemplateVariables("Hello {{state.user.name}}, search: {{state.query}}")
- * // Returns: ["user.name", "query"]
+ * extractTemplateVariables("Hello {{state.user.name}}, temp: {{parameters.temperature}}")
+ * // Returns: [{ type: "state", path: "user.name" }, { type: "parameters", path: "temperature" }]
  * 
  * @param template - Template string
- * @returns Array of variable paths (e.g., ["user.name", "query"])
+ * @returns Array of variable info objects
  */
-export function extractTemplateVariables(template: string): string[] {
-  const matches = template.matchAll(/\{\{state\.(\w+(?:\.\w+)*)\}\}/g);
-  return Array.from(matches, match => match[1]);
+export function extractTemplateVariables(template: string): Array<{ type: 'state' | 'parameters'; path: string }> {
+  const matches = template.matchAll(/\{\{(state|parameters)\.(\w+(?:\.\w+)*)\}\}/g);
+  return Array.from(matches, match => ({ type: match[1] as 'state' | 'parameters', path: match[2] }));
 }
