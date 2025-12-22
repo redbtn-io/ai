@@ -122,12 +122,12 @@ export class VectorStoreManager {
 
   /**
    * Creates a new VectorStoreManager instance
-   * @param chromaUrl ChromaDB server URL (default: http://localhost:8024)
+   * @param chromaUrl ChromaDB server URL (default: CHROMA_URL env var or http://localhost:8024)
    * @param ollamaUrl Ollama server URL for embeddings (default: http://localhost:11434)
    * @param embeddingModel Model name for embeddings (default: nomic-embed-text)
    */
   constructor(
-    chromaUrl: string = 'http://localhost:8024',
+    chromaUrl: string = process.env.CHROMA_URL || 'http://localhost:8024',
     ollamaUrl: string = DEFAULT_OLLAMA_URL,
     embeddingModel: string = DEFAULT_EMBEDDING_MODEL
   ) {

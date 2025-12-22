@@ -80,7 +80,7 @@
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                         RED CLASS (index.ts)                          │   │
 │  │  • load(nodeId?) - Initialize registries, MCP, memory                │   │
-│  │  • respond(query, options) - Main entry point for AI responses       │   │
+│  │  • run(input, options) - Main entry point for graph execution        │   │
 │  │  • think() - Autonomous thinking loop                                │   │
 │  │  • shutdown() - Graceful cleanup of child processes                  │   │
 │  └──────────────────────────────┬───────────────────────────────────────┘   │
@@ -135,7 +135,7 @@ This package is part of a monorepo workspace:
 │   ├── src/
 │   │   ├── index.ts             # Red class - main export
 │   │   ├── functions/           # Entry point functions
-│   │   │   ├── respond.ts       # Main respond function
+│   │   │   ├── run.ts           # Main run function (graph execution)
 │   │   │   └── background/      # Background tasks (titles, summaries)
 │   │   └── lib/
 │   │       ├── graphs/          # Graph compilation & registry
@@ -229,7 +229,7 @@ const red = new Red(config);
 await red.load("my-node-id");  // Optional node ID for distributed systems
 
 // Non-streaming response
-const response = await red.respond(
+const response = await red.run(
   { message: 'Hello!' },
   { 
     conversationId: 'conv_123',
@@ -241,7 +241,7 @@ console.log(response.content);         // "Hello! How can I help?"
 console.log(response.usage_metadata);  // { input_tokens: 10, output_tokens: 5, ... }
 
 // Streaming response
-const stream = await red.respond(
+const stream = await red.run(
   { message: 'Search for TypeScript tutorials' },
   { 
     stream: true, 
@@ -269,7 +269,7 @@ await red.shutdown();
 
 ```typescript
 // Router automatically detects web search intent
-const response = await red.respond(
+const response = await red.run(
   { message: 'What is the weather in San Francisco today?' },
   { userId: 'user_123' }
 );
@@ -299,7 +299,7 @@ class Red {
   // Lifecycle
   constructor(config: RedConfig);
   async load(nodeId?: string): Promise<void>;  // Initialize all subsystems
-  async respond(query, options): Promise<AIMessage | AsyncGenerator>;
+  async run(input, options): Promise<AIMessage | AsyncGenerator>;
   async think(): Promise<void>;                 // Autonomous thinking loop
   async shutdown(): Promise<void>;              // Graceful cleanup
 }
@@ -356,7 +356,7 @@ interface RedConfig {
 |--------|---------|-------------|
 | `constructor(config)` | `Red` | Create instance with configuration |
 | `load(nodeId?)` | `Promise<void>` | Initialize all subsystems, start MCP servers |
-| `respond(query, options)` | `Promise<AIMessage \| AsyncGenerator>` | Process user query |
+| `run(input, options)` | `Promise<AIMessage \| AsyncGenerator>` | Process user query |
 | `think()` | `Promise<void>` | Start autonomous thinking loop |
 | `stopThinking()` | `void` | Signal thinking loop to stop |
 | `shutdown()` | `Promise<void>` | Graceful cleanup, kill MCP processes |
@@ -552,7 +552,7 @@ const config = await red.neuronRegistry.getConfig(neuronId, userId);
 ### Per-User Model Loading Flow
 
 ```
-respond() called with userId
+run() called with userId
     ↓
 Load user settings from MongoDB
     ↓
@@ -1372,7 +1372,7 @@ ai/
 ├── src/
 │   ├── index.ts                    # Main Red class and exports
 │   ├── functions/
-│   │   ├── respond.ts              # Core response generation
+│   │   ├── run.ts                  # Core graph execution
 │   │   └── background/             # Background tasks (titles, summaries)
 │   └── lib/
 │       ├── graphs/

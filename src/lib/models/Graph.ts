@@ -123,6 +123,35 @@ const graphSchema = new Schema<GraphDocument>({
     index: true,
     default: 'system'
   },
+  
+  // Graph type: agent (requires input message) vs workflow (can run without input)
+  graphType: {
+    type: String,
+    enum: ['agent', 'workflow'],
+    default: 'agent',
+    index: true
+  },
+  
+  // Input configuration (for workflows, defines expected input schema)
+  inputSchema: {
+    type: Schema.Types.Mixed,
+    default: null
+  },
+  
+  // Default input values (for scheduled workflows)
+  defaultInput: {
+    type: Schema.Types.Mixed,
+    default: null
+  },
+  
+  // Output configuration
+  outputConfig: {
+    streaming: { type: Boolean, default: true },
+    persistResult: { type: Boolean, default: true },
+    webhookUrl: { type: String, default: null },
+    notifyEmail: { type: String, default: null }
+  },
+  
   isDefault: { 
     type: Boolean, 
     default: false,

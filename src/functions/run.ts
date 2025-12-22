@@ -1,5 +1,5 @@
 /**
- * Response generation and streaming utilities
+ * Graph execution and streaming utilities
  */
 
 import type { Red } from '../index';
@@ -23,12 +23,12 @@ const activeStreams = new Map<string, AbortController>();
 export function abortStream(generationId: string): boolean {
   const controller = activeStreams.get(generationId);
   if (controller) {
-    console.log(`[Respond] Aborting stream for generation ${generationId}`);
+    console.log(`[Run] Aborting stream for generation ${generationId}`);
     controller.abort();
     activeStreams.delete(generationId);
     return true;
   }
-  console.warn(`[Respond] No active stream found for generation ${generationId}`);
+  console.warn(`[Run] No active stream found for generation ${generationId}`);
   return false;
 }
 
@@ -41,35 +41,33 @@ export function getActiveStreamCount(): number {
 }
 
 /**
- * Handles a direct, on-demand request from a user-facing application.
+ * Executes a graph with the provided input.
  * Automatically manages conversation history, memory, and summarization.
  * 
- * Phase 0: Now requires userId in options for per-user model loading.
- * 
  * @param red The Red instance
- * @param query The user's input or request data (must have a 'message' property)
- * @param options Metadata about the source of the request and conversation settings (MUST include userId)
+ * @param input The input data for the graph. For agent graphs, must include 'message' property.
+ * @param options Metadata about the source of the request and execution settings (MUST include userId)
  * @returns For non-streaming: the full AIMessage object with content, tokens, metadata, and conversationId.
  *          For streaming: an async generator that yields metadata first (with conversationId), then string chunks, then finally the full AIMessage.
  */
-export async function respond(
+export async function run(
   red: Red,
-  query: { message: string },
+  input: Record<string, any>,
   options: InvokeOptions = {}
 ): Promise<any | AsyncGenerator<string | any, void, unknown>> {
-  console.log('[Respond] ========== FUNCTION ENTRY - CODE VERSION 2025-11-23-19:05 ==========');
-  console.log('[Respond] options:', JSON.stringify(options, null, 2));
-  // Phase 0: Require userId for per-user model loading
+  console.log('[Run] ========== FUNCTION ENTRY ==========');
+  console.log('[Run] options:', JSON.stringify(options, null, 2));
+  // Require userId for per-user model loading and tracking
   const userId = (options as any).userId;
   if (!userId) {
-    throw new Error('[Respond] userId is required in options for per-user model loading (Phase 0)');
+    throw new Error('[Run] userId is required in options for per-user model loading');
   }
   
-  // Phase 0/1: Load user settings from MongoDB (account tier, default neurons, default graph)
+  // Load user settings from MongoDB (account tier, default neurons, default graph)
   let accountTier = 4; // Default to FREE tier
   let defaultNeuronId = 'red-neuron';
   let defaultWorkerNeuronId = 'red-neuron';
-  let defaultGraphId = DEFAULT_GRAPH_ID; // Phase 2: Dynamic graph system - default to system template
+  let defaultGraphId = DEFAULT_GRAPH_ID;
   
   try {
     // Load user settings from MongoDB (Mongoose is already connected via database.ts)
@@ -93,21 +91,24 @@ export async function respond(
       accountTier = user.accountLevel ?? 4;
       defaultNeuronId = user.defaultNeuronId || 'red-neuron';
       defaultWorkerNeuronId = user.defaultWorkerNeuronId || 'red-neuron';
-  defaultGraphId = user.defaultGraphId || DEFAULT_GRAPH_ID;
-      console.log(`[Respond] Loaded user settings - Tier: ${accountTier}, Graph: ${defaultGraphId}, Neuron: ${defaultNeuronId}`);
+      defaultGraphId = user.defaultGraphId || DEFAULT_GRAPH_ID;
+      console.log(`[Run] Loaded user settings - Tier: ${accountTier}, Graph: ${defaultGraphId}, Neuron: ${defaultNeuronId}`);
     } else {
-      console.warn(`[Respond] User ${userId} not found, using FREE tier defaults`);
+      console.warn(`[Run] User ${userId} not found, using FREE tier defaults`);
     }
   } catch (error) {
-    console.error('[Respond] Error loading user settings:', error);
-    console.warn('[Respond] Falling back to FREE tier defaults');
+    console.error('[Run] Error loading user settings:', error);
+    console.warn('[Run] Falling back to FREE tier defaults');
   }
   
-  // Phase 1: Determine which graph to use (options override user default)
+  // Determine which graph to use (options override user default)
   const graphId = options.graphId || defaultGraphId;
   
+  // For backward compatibility with agent graphs, extract message from input
+  const message = input.message || '';
+  
   // Generate conversation ID if not provided (use memory directly for ID generation since it's a simple utility)
-  const conversationId = options.conversationId || red.memory.generateConversationId(query.message);
+  const conversationId = options.conversationId || red.memory.generateConversationId(message);
   
   // Extract messageId for Redis pub/sub (if provided) - this is the request/generation ID
   const requestId = (options as any).messageId;
@@ -117,15 +118,15 @@ export async function respond(
   const userMessageId = options.userMessageId || `msg_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   const assistantMessageId = `msg_${Date.now() + 1}_${Math.random().toString(36).substring(7)}`;
   
-  console.log(`[Respond] Starting respond() - conversationId:${conversationId}, requestId:${requestId}, userMessageId:${userMessageId}, userId:${userId}, tier:${accountTier}, graphId:${graphId}, query:${query.message.substring(0, 50)}`);
+  console.log(`[Run] Starting run() - conversationId:${conversationId}, requestId:${requestId}, userMessageId:${userMessageId}, userId:${userId}, tier:${accountTier}, graphId:${graphId}, input keys:${Object.keys(input).join(',')}`);
   
-  // Phase 1: Load and compile the user's graph (with fallback on access denied)
+  // Load and compile the user's graph (with fallback on access denied)
   let compiledGraph;
   let actualGraphId = graphId;
   
   try {
     compiledGraph = await red.graphRegistry.getGraph(graphId, userId);
-    console.log(`[Respond] Using graph: ${graphId} (compiled at ${compiledGraph.compiledAt.toISOString()})`);
+    console.log(`[Run] Using graph: ${graphId} (compiled at ${compiledGraph.compiledAt.toISOString()})`);
   } catch (error: any) {
     // Check if this is a recoverable error (tier restriction or not found)
     const isAccessDenied = error.name === 'GraphAccessDeniedError' || error.message?.includes('requires tier');
@@ -133,19 +134,19 @@ export async function respond(
     
     if (isAccessDenied || isNotFound) {
       const reason = isAccessDenied ? 'Access denied' : 'Graph not found';
-      console.warn(`[Respond] ${reason} for graph ${graphId}, falling back to ${DEFAULT_GRAPH_ID}`);
+      console.warn(`[Run] ${reason} for graph ${graphId}, falling back to ${DEFAULT_GRAPH_ID}`);
       actualGraphId = DEFAULT_GRAPH_ID;
       
       try {
         compiledGraph = await red.graphRegistry.getGraph(DEFAULT_GRAPH_ID, userId);
-        console.log(`[Respond] Using fallback graph: ${DEFAULT_GRAPH_ID} (compiled at ${compiledGraph.compiledAt.toISOString()})`);
+        console.log(`[Run] Using fallback graph: ${DEFAULT_GRAPH_ID} (compiled at ${compiledGraph.compiledAt.toISOString()})`);
       } catch (fallbackError) {
-        console.error(`[Respond] Failed to load fallback graph:`, fallbackError);
+        console.error(`[Run] Failed to load fallback graph:`, fallbackError);
         throw new Error(`Failed to load graph '${graphId}' and fallback failed: ${fallbackError}`);
       }
     } else {
       // Other errors (compilation failed, database error, etc.)
-      console.error(`[Respond] Failed to load graph ${graphId}:`, error);
+      console.error(`[Run] Failed to load graph ${graphId}:`, error);
       throw new Error(`Failed to load graph '${graphId}': ${error}`);
     }
   }
@@ -158,7 +159,7 @@ export async function respond(
       category: 'system',
       message: 'Generation already in progress for conversation',
       conversationId,
-      metadata: { query: query.message.substring(0, 100) }
+      metadata: { input: message.substring(0, 100) }
     });
     throw new Error('A generation is already in progress for this conversation');
   }
@@ -172,22 +173,24 @@ export async function respond(
     conversationId,
     metadata: {
       messageId: requestId,
-      queryLength: query.message.length,
+      inputLength: message.length,
       source: options.source
     }
   });
   
-  // Store user message via Context MCP
-  await red.callMcpTool('store_message', {
-    conversationId,
-    userId,
-    role: 'user',
-    content: query.message,
-    messageId: userMessageId, // Use unique user message ID
-    toolExecutions: [] // User messages don't have tool executions
-  }, { conversationId, generationId, messageId: requestId });
+  // Store user message via Context MCP (only if there's a message - agents require this, workflows may not)
+  if (message) {
+    await red.callMcpTool('store_message', {
+      conversationId,
+      userId,
+      role: 'user',
+      content: message,
+      messageId: userMessageId, // Use unique user message ID
+      toolExecutions: [] // User messages don't have tool executions
+    }, { conversationId, generationId, messageId: requestId });
+  }
   
-  // Phase 0: Build per-user initial state with neuron system
+  // Build per-user initial state with neuron system
   const initialState = {
     // Infrastructure components
     neuronRegistry: red.neuronRegistry,
@@ -201,10 +204,11 @@ export async function respond(
     },
     // Universal Node Data - Container for all node-specific dynamic data
     data: {
-      query,
+      query: { message }, // Backward compatibility: wrap message in query object
+      input, // Full input object for workflow graphs
       options: { ...options, conversationId, generationId }, // Add generationId to options
       messageId: requestId, // Add requestId to state for tool event publishing
-      messages: [{ role: 'user', content: query.message }], // Add initial message for precheck/classifier
+      messages: message ? [{ role: 'user', content: message }] : [], // Add initial message for precheck/classifier
       userId,
       accountTier,
       defaultNeuronId,
@@ -212,7 +216,7 @@ export async function respond(
     }
   };
 
-  // Inject a system message into the graph state for every respond() call.
+  // Inject a system message into the graph state for every run() call.
   // Use env override if available so this can be configured without code changes.
   const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || `You are Red, an AI assistant developed by redbtn.io.
 Current date: ${new Date().toLocaleDateString()}
@@ -248,18 +252,26 @@ CRITICAL RULES:
   }
 
   // Check if streaming is requested
-  console.log(`[Respond] Stream option:`, options.stream);
+  console.log(`[Run] Stream option:`, options.stream);
   if (options.stream) {
-    console.log(`[Respond] Taking STREAMING path`);
+    console.log(`[Run] Taking STREAMING path`);
     // Phase 1: Use compiled graph for streaming
     return streamThroughGraphWithMemory(red, compiledGraph, initialState, conversationId, generationId, requestId, assistantMessageId, userId, defaultNeuronId);
   } else {
-    console.log(`[Respond] Taking NON-STREAMING path`);
+    console.log(`[Run] Taking NON-STREAMING path`);
     // Phase 1: Invoke the compiled graph and return the full AIMessage
     const result = await compiledGraph.graph.invoke(initialState);
     // Support both legacy (result.response) and universal (result.data.response) paths
-    const response = result.data?.response || result.response;
-    console.log(`[Respond] Non-streaming: Graph invoked, got response`);
+    // Universal nodes return string directly, legacy returns AIMessage with .content
+    const rawResponse = result.data?.response || result.response;
+    // Normalize to AIMessage-like object
+    const response = typeof rawResponse === 'string' 
+      ? { content: rawResponse, usage_metadata: undefined }
+      : rawResponse;
+    console.log(`[Run] Non-streaming: Graph invoked, got response`, { 
+      responseType: typeof rawResponse,
+      contentPreview: (response?.content || '').substring(0, 50)
+    });
 
     
     // Retrieve tool executions from Redis state
@@ -314,7 +326,7 @@ CRITICAL RULES:
         }
         
         toolExecutions = Array.from(toolMap.values());
-        console.log(`[Respond] Collected ${toolExecutions.length} tool executions from generation state`);
+        console.log(`[Run] Collected ${toolExecutions.length} tool executions from generation state`);
       }
     }
     
@@ -328,7 +340,7 @@ CRITICAL RULES:
       toolExecutions
     }, { conversationId, generationId, messageId: requestId });
     
-    console.log(`[Respond] Non-streaming: About to complete generation ${generationId}`);
+    console.log(`[Run] Non-streaming: About to complete generation ${generationId}`);
     // Complete the generation (non-streaming path)
     await red.logger.completeGeneration(generationId, {
       response: typeof response.content === 'string' ? response.content : JSON.stringify(response.content),
@@ -338,7 +350,7 @@ CRITICAL RULES:
       model: defaultNeuronId,
       tokens: response.usage_metadata,
     });
-    console.log(`[Respond] Non-streaming: Generation ${generationId} marked as complete`);
+    console.log(`[Run] Non-streaming: Generation ${generationId} marked as complete`);
     
     // Get message count for title generation via Context MCP
     const metadataResult = await red.callMcpTool('get_conversation_metadata', {
@@ -397,7 +409,7 @@ async function* streamThroughGraphWithMemory(
   // Memory leak prevention: Track active stream (Pre-Phase 2.5 Part 4)
   const abortController = new AbortController();
   activeStreams.set(generationId, abortController);
-  console.log(`[Respond] Registered stream ${generationId} (active: ${activeStreams.size})`);
+  console.log(`[Run] Registered stream ${generationId} (active: ${activeStreams.size})`);
   
   try {
     // Start stream timeout
@@ -405,7 +417,7 @@ async function* streamThroughGraphWithMemory(
       const error = new Error(
         `Stream timeout after ${STREAM_TIMEOUT_MS}ms for conversation ${conversationId}, generation ${generationId}`
       );
-      console.error('[Respond] Stream timeout:', error.message);
+      console.error('[Run] Stream timeout:', error.message);
       throw error;
     }, STREAM_TIMEOUT_MS);
     
@@ -502,7 +514,7 @@ async function* streamThroughGraphWithMemory(
           if (!inThinkingTag && pendingBuffer.startsWith('<think>')) {
             inThinkingTag = true;
             pendingBuffer = pendingBuffer.slice(7); // Remove '<think>'
-            console.log('[Respond] 🧠 THINKING TAG OPENED | Next chars:', pendingBuffer.substring(0, 50));
+            console.log('[Run] 🧠 THINKING TAG OPENED | Next chars:', pendingBuffer.substring(0, 50));
             
             // Publish tool start event
             if (thinkingPublisher) {
@@ -518,23 +530,23 @@ async function* streamThroughGraphWithMemory(
                 description: 'Reasoning through the problem' 
               });
               yield { _status: true, action: 'thinking', description: 'Reasoning through the problem' };
-              process.stdout.write(`[Respond] Streaming thinking: 0 chars\r`);
+              process.stdout.write(`[Run] Streaming thinking: 0 chars\r`);
             }
             continue; // Recheck buffer after removing tag
           }
           
           // Check for closing think tag
           if (inThinkingTag && pendingBuffer.startsWith('</think>')) {
-            console.log('[Respond] 🧠 THINKING TAG CLOSED - accumulated', thinkingBuffer.length, 'chars');
+            console.log('[Run] 🧠 THINKING TAG CLOSED - accumulated', thinkingBuffer.length, 'chars');
             if (requestId) {
-              process.stdout.write(`\n[Respond] Thinking complete: ${thinkingBuffer.length} chars\n`);
+              process.stdout.write(`\n[Run] Thinking complete: ${thinkingBuffer.length} chars\n`);
             }
             inThinkingTag = false;
             pendingBuffer = pendingBuffer.slice(8); // Remove '</think>'
             
             // ✨ IMPORTANT: Send a space character immediately to trigger thinking shrink
             // This ensures frontend gets a content chunk even if whitespace follows
-            console.log('[Respond] 📤 Sending content chunk to trigger thinking shrink');
+            console.log('[Run] 📤 Sending content chunk to trigger thinking shrink');
             streamedTokens = true;
             yield ' ';
             
@@ -571,7 +583,7 @@ async function* streamThroughGraphWithMemory(
                     },
                   });
                 } catch (err) {
-                  console.error('[Respond] Failed to store streaming thinking:', err);
+                  console.error('[Run] Failed to store streaming thinking:', err);
                 }
               }
             }
@@ -602,7 +614,7 @@ async function* streamThroughGraphWithMemory(
               
               // Update progress indicator without logging each character
               if (thinkingBuffer.length % 100 === 0) {
-                process.stdout.write(`[Respond] Streaming thinking: ${thinkingBuffer.length} chars\r`);
+                process.stdout.write(`[Run] Streaming thinking: ${thinkingBuffer.length} chars\r`);
               }
               yield { _thinkingChunk: true, content: char };
             }
@@ -614,7 +626,7 @@ async function* streamThroughGraphWithMemory(
             
             // Log first content character after thinking ends
             if (streamedThinking && !streamedTokens) {
-              console.log('[Respond] 📝 FIRST CONTENT CHARACTER after thinking:', JSON.stringify(char));
+              console.log('[Run] 📝 FIRST CONTENT CHARACTER after thinking:', JSON.stringify(char));
             }
             
             fullContent += char;
@@ -653,7 +665,7 @@ async function* streamThroughGraphWithMemory(
         const responseContent = graphOutput?.data?.response?.content || graphOutput?.data?.response;
         if (responseContent && typeof responseContent === 'string' && !streamedTokens) {
           // Direct response path - stream the pre-generated content
-          console.log(`[Respond] Direct response detected, streaming ${responseContent.length} chars`);
+          console.log(`[Run] Direct response detected, streaming ${responseContent.length} chars`);
           
           // Stream the content character by character for consistent UX
           for (const char of responseContent) {
@@ -679,7 +691,7 @@ async function* streamThroughGraphWithMemory(
     
     // CRITICAL: Flush remaining pending buffer (last 8 chars or less)
     if (pendingBuffer.length > 0) {
-      process.stdout.write(`\r[Respond] Flushing ${pendingBuffer.length} remaining chars\n`);
+      process.stdout.write(`\r[Run] Flushing ${pendingBuffer.length} remaining chars\n`);
     }
     while (pendingBuffer.length > 0) {
       const char = pendingBuffer[0];
@@ -728,7 +740,7 @@ async function* streamThroughGraphWithMemory(
       : 0;
     
     // Log metrics
-    console.log(`[Respond] Streaming metrics:`, {
+    console.log(`[Run] Streaming metrics:`, {
       duration: `${streamingMetrics.streamingDuration}ms`,
       chunksReceived: streamingMetrics.chunksReceived,
       chunksYielded: streamingMetrics.chunksYielded,
@@ -773,21 +785,21 @@ async function* streamThroughGraphWithMemory(
                 model: defaultNeuronId, // Phase 0: Use neuron ID
               },
             });
-            console.log(`[Respond] Stored thinking: ${thoughtId} with messageId: ${requestId}`);
+            console.log(`[Run] Stored thinking: ${thoughtId} with messageId: ${requestId}`);
             
             // Publish to Redis for real-time updates  
             if (requestId) {
-              console.log(`[Respond] Publishing non-stream thinking to Redis for messageId: ${requestId}, length: ${thinking.length}`);
+              console.log(`[Run] Publishing non-stream thinking to Redis for messageId: ${requestId}, length: ${thinking.length}`);
               // Publish thinking content chunk by chunk for consistent display
               for (const char of thinking) {
                 await red.messageQueue.publishThinkingChunk(requestId, char);
               }
-              console.log(`[Respond] Published non-stream thinking successfully`);
+              console.log(`[Run] Published non-stream thinking successfully`);
             } else {
-              console.warn(`[Respond] No messageId provided for non-stream thinking`);
+              console.warn(`[Run] No messageId provided for non-stream thinking`);
             }
           } catch (err) {
-            console.error('[Respond] Failed to store non-streamed thinking:', err);
+            console.error('[Run] Failed to store non-streamed thinking:', err);
           }
         }
       }
@@ -807,8 +819,8 @@ async function* streamThroughGraphWithMemory(
     // Retrieve tool executions from Redis state (moved outside fullContent check)
     if (requestId) {
         const messageState = await red.messageQueue.getMessageState(requestId);
-        console.log(`[Respond] Message state for ${requestId}:`, messageState ? 'Found' : 'Not found');
-        console.log(`[Respond] Tool events in state:`, messageState?.toolEvents?.length || 0);
+        console.log(`[Run] Message state for ${requestId}:`, messageState ? 'Found' : 'Not found');
+        console.log(`[Run] Tool events in state:`, messageState?.toolEvents?.length || 0);
         if (messageState?.toolEvents) {
           // Convert tool events to tool executions for storage
           const toolMap = new Map<string, any>();
@@ -857,15 +869,15 @@ async function* streamThroughGraphWithMemory(
           }
           
       toolExecutions = Array.from(toolMap.values());
-      console.log(`[Respond] Collected ${toolExecutions.length} tool executions from generation state`);
+      console.log(`[Run] Collected ${toolExecutions.length} tool executions from generation state`);
     } else {
-      console.log(`[Respond] No tool events found in message state`);
+      console.log(`[Run] No tool events found in message state`);
     }
   } else {
-    console.log(`[Respond] No requestId provided, cannot retrieve tool executions`);
+    console.log(`[Run] No requestId provided, cannot retrieve tool executions`);
   }
   
-  console.log(`[Respond] About to store message with ${toolExecutions.length} tool executions, fullContent length: ${fullContent.length}`);
+  console.log(`[Run] About to store message with ${toolExecutions.length} tool executions, fullContent length: ${fullContent.length}`);
   
   // Store content via MCP only if we have content
   if (fullContent) {
@@ -879,7 +891,7 @@ async function* streamThroughGraphWithMemory(
     }, { conversationId, generationId, messageId: requestId });
   }
   
-  console.log(`[Respond] About to complete generation ${generationId}`);
+  console.log(`[Run] About to complete generation ${generationId}`);
   // CRITICAL: Complete the generation ALWAYS - this clears currentGenerationId
   await red.logger.completeGeneration(generationId, {
     response: fullContent || '',
@@ -889,7 +901,7 @@ async function* streamThroughGraphWithMemory(
     model: defaultNeuronId,
     tokens: finalMessage?.usage_metadata,
   });
-  console.log(`[Respond] Generation ${generationId} marked as complete`);
+  console.log(`[Run] Generation ${generationId} marked as complete`);
   
   // Get message count for title generation via Context MCP
   const metadataResult = await red.callMcpTool('get_conversation_metadata', {
@@ -929,7 +941,7 @@ async function* streamThroughGraphWithMemory(
     // Clean up active stream tracking
     if (activeStreams.has(generationId)) {
       activeStreams.delete(generationId);
-      console.log(`[Respond] Cleaned up stream ${generationId} (active: ${activeStreams.size})`);
+      console.log(`[Run] Cleaned up stream ${generationId} (active: ${activeStreams.size})`);
     }
   }
 }

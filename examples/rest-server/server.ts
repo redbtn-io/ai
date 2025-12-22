@@ -267,12 +267,17 @@ async function handleChatCompletion(req: Request, res: Response) {
 
       // Red handles: storing user message, getting context, generating response,
       // storing assistant message, and triggering summarization
-      const stream = await red.respond(
+      // Note: REST server uses a system user for all interactions
+      // In production, extract userId from auth headers
+      const systemUserId = process.env.REST_SERVER_USER_ID || 'rest-server-system';
+      
+      const stream = await red.run(
         { message: userMessage },
         { 
           source: { application: 'redChat' }, 
           stream: true, 
-          conversationId 
+          conversationId,
+          userId: systemUserId
         }
       );
 
@@ -365,11 +370,14 @@ async function handleChatCompletion(req: Request, res: Response) {
       // Non-streaming mode
       // Red handles: storing user message, getting context, generating response,
       // storing assistant message, and triggering summarization
-      const response = await red.respond(
+      const systemUserId = process.env.REST_SERVER_USER_ID || 'rest-server-system';
+      
+      const response = await red.run(
         { message: userMessage },
         { 
           source: { application: 'redChat' }, 
-          conversationId 
+          conversationId,
+          userId: systemUserId
         }
       );
 

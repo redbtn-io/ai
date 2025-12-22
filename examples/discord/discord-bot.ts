@@ -176,11 +176,16 @@ async function handleMessage(message: Message): Promise<void> {
 
     try {
       // Get streaming response from Red AI
-      const stream = await red.respond(
+      // Note: Discord bot uses a system user for all interactions
+      // In production, you could map Discord user IDs to your user system
+      const systemUserId = process.env.DISCORD_BOT_USER_ID || 'discord-bot-system';
+      
+      const stream = await red.run(
         { message: formattedMessage },
         {
           stream: true,
           conversationId,
+          userId: systemUserId,
           source: {
             application: 'redChat',
             device: 'web'

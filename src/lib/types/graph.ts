@@ -144,6 +144,23 @@ export interface GraphConfig {
   /** Owner user ID: "system" for defaults, user ID for custom graphs */
   userId: string;
   
+  /** Graph type: 'agent' requires input message, 'workflow' can run without input */
+  graphType?: 'agent' | 'workflow';
+  
+  /** Input schema for workflows (defines expected input structure) */
+  inputSchema?: Record<string, any>;
+  
+  /** Default input values (for scheduled/automated workflows) */
+  defaultInput?: Record<string, any>;
+  
+  /** Output configuration for the graph */
+  outputConfig?: {
+    streaming?: boolean;
+    persistResult?: boolean;
+    webhookUrl?: string | null;
+    notifyEmail?: string | null;
+  };
+  
   /** True for system-provided template graphs */
   isDefault: boolean;
   

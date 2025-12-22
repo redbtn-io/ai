@@ -334,8 +334,10 @@ npm run mcp:start
 ```
 
 This starts:
-- **Web Server** on channel `mcp:server:web:*`
-- **System Server** on channel `mcp:server:system:*`
+- **Web Server** - Web search and URL scraping
+- **System Server** - Safe command execution  
+- **RAG Server** - Vector store and Knowledge Library operations
+- **Context Server** - Message history and metadata
 
 ### Test the Servers
 

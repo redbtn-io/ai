@@ -12,7 +12,7 @@ import { PersistentLogger } from "./lib/logs/persistent-logger";
 import { NeuronRegistry } from "./lib/neurons/NeuronRegistry";
 import { GraphRegistry } from "./lib/graphs/GraphRegistry";
 import * as background from "./functions/background";
-import { respond as respondFunction } from "./functions/respond";
+import { run as runFunction } from "./functions/run";
 import { McpRegistry } from "./lib/mcp/registry";
 import { StdioServerPool } from "./lib/mcp/stdio-pool";
 
@@ -120,13 +120,13 @@ export interface RedConfig {
 }
 
 /**
- * Defines optional parameters for on-demand invocations,
- * providing context about the request's origin.
+ * Defines optional parameters for graph execution,
+ * providing context about the request's origin and execution settings.
  */
 export interface InvokeOptions {
   source?: {
     device?: 'phone' | 'speaker' | 'web';
-    application?: 'redHome' | 'redChat' | 'redAssistant';
+    application?: 'redHome' | 'redChat' | 'redAssistant' | 'automation';
   };
   stream?: boolean; // Flag to enable streaming responses
   conversationId?: string; // Optional conversation ID - will be auto-generated if not provided
@@ -134,7 +134,13 @@ export interface InvokeOptions {
   messageId?: string; // Optional message ID for Redis pub/sub streaming
   userMessageId?: string; // Optional user message ID from client request (stored in memory)
   userId?: string; // Required for per-user model loading and conversation ownership
-  graphId?: string; // Phase 1: Optional graph ID to use (defaults to user's defaultGraphId)
+  graphId?: string; // Optional graph ID to use (defaults to user's defaultGraphId)
+  
+  // Automation-specific options
+  automationId?: string; // ID of the automation that triggered this run
+  runId?: string; // Unique ID for this automation run
+  skipConversation?: boolean; // Skip conversation creation (for workflow graphs)
+  triggerType?: 'chat' | 'webhook' | 'schedule' | 'event' | 'manual'; // What triggered this run
 }
 
 // --- The Red Library Class ---
@@ -348,15 +354,15 @@ export class Red {
   }
 
   /**
-   * Handles a direct, on-demand request from a user-facing application.
+   * Executes a graph with the provided input.
    * Automatically manages conversation history, memory, and summarization.
-   * @param query The user's input or request data (must have a 'message' property)
-   * @param options Metadata about the source of the request and conversation settings
+   * @param input The input data for the graph. For agent graphs, should include 'message' property.
+   * @param options Metadata about the source of the request and execution settings
    * @returns For non-streaming: the full AIMessage object with content, tokens, metadata, and conversationId.
    *          For streaming: an async generator that yields metadata first (with conversationId), then string chunks, then finally the full AIMessage.
    */
-  public async respond(query: { message: string }, options: InvokeOptions = {}): Promise<any | AsyncGenerator<string | any, void, unknown>> {
-    return respondFunction(this, query, options);
+  public async run(input: Record<string, any> = {}, options: InvokeOptions = {}): Promise<any | AsyncGenerator<string | any, void, unknown>> {
+    return runFunction(this, input, options);
   }
 
   /**
