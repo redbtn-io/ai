@@ -16,7 +16,11 @@ export class ContextServer extends McpServer {
   
   constructor(redis: Redis, redisUrl?: string) {
     super(redis, 'context', '1.0.0');
-    this.memoryManager = new MemoryManager(redisUrl || process.env.REDIS_URL || 'redis://localhost:6379');
+    const resolvedRedisUrl = redisUrl || process.env.REDIS_URL;
+    if (!resolvedRedisUrl) {
+      throw new Error('[Context Server] REDIS_URL environment variable is required');
+    }
+    this.memoryManager = new MemoryManager(resolvedRedisUrl);
     console.log('[Context Server] Initialized with Redis memory manager');
   }
 

@@ -18,10 +18,14 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { LRUCache } from "lru-cache";
+import { createDecipheriv, createHash } from "crypto";
 import { getDatabase, DatabaseManager } from "../memory/database";
 import Neuron from "../models/Neuron";
 import { NeuronConfig, NeuronDocument } from "../types/neuron";
+import { createLogger } from "../utils/logger";
 import type { RedConfig } from "../../index";
+
+const log = createLogger('NeuronRegistry');
 
 /**
  * Custom error classes for neuron operations
@@ -72,7 +76,7 @@ export class NeuronRegistry {
    */
   async initialize(): Promise<void> {
     await this.db.connect();
-    console.log('[NeuronRegistry] Initialized successfully');
+    log.info(' Initialized successfully');
   }
   
   /**
@@ -322,27 +326,62 @@ export class NeuronRegistry {
         }
       }
       keysToDelete.forEach(key => this.configCache.delete(key));
-      console.log(`[NeuronRegistry] Cleared ${keysToDelete.length} cache entries for user ${userId}`);
+      log.info(`Cleared ${keysToDelete.length} cache entries for user ${userId}`);
     } else {
       // Clear all
       this.configCache.clear();
-      console.log('[NeuronRegistry] Cleared entire cache');
+      log.info('Cleared entire cache');
     }
   }
   
   /**
-   * Decrypt API key (placeholder - TODO: implement proper encryption)
+   * Decrypt API key using AES-256-GCM
+   * Compatible with webapp's encryption format (iv:authTag:ciphertext)
    * 
    * @param encrypted Encrypted API key from database
    * @returns Decrypted API key
    */
   private decryptApiKey(encrypted: string): string {
-    // TODO: Implement encryption/decryption with app secret
-    // For now, assume stored in plaintext (INSECURE - fix in production)
-    if (encrypted.startsWith('encrypted:')) {
-      return encrypted.substring(10);
+    if (!encrypted) return '';
+    
+    // Check if value is encrypted (contains format separator)
+    if (!encrypted.includes(':')) {
+      // Not encrypted, return as-is (backward compatibility)
+      return encrypted;
     }
-    return encrypted;
+    
+    const parts = encrypted.split(':');
+    if (parts.length !== 3) {
+      // Invalid format, return as-is
+      return encrypted;
+    }
+    
+    const [ivBase64, authTagBase64, ciphertext] = parts;
+    
+    try {
+      // Get encryption key from environment (same source as webapp)
+      const keySource = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET;
+      if (!keySource) {
+        log.warn(' No encryption key available, returning encrypted value');
+        return encrypted;
+      }
+      
+      const key = createHash('sha256').update(keySource).digest();
+      const iv = Buffer.from(ivBase64, 'base64');
+      const authTag = Buffer.from(authTagBase64, 'base64');
+      
+      const decipher = createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
+      
+      let decrypted = decipher.update(ciphertext, 'base64', 'utf8');
+      decrypted += decipher.final('utf8');
+      
+      return decrypted;
+    } catch (error) {
+      // Decryption failed - might be unencrypted legacy data
+      log.warn(' Failed to decrypt API key, returning as-is');
+      return encrypted;
+    }
   }
   
   /**
@@ -351,7 +390,7 @@ export class NeuronRegistry {
   async shutdown(): Promise<void> {
     await this.db.close();
     this.configCache.clear();
-    console.log('[NeuronRegistry] Shutdown complete');
+    log.info(' Shutdown complete');
   }
 }
 

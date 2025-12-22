@@ -58,7 +58,7 @@ export async function run(
   console.log('[Run] ========== FUNCTION ENTRY ==========');
   console.log('[Run] options:', JSON.stringify(options, null, 2));
   // Require userId for per-user model loading and tracking
-  const userId = (options as any).userId;
+  const userId = options.userId;
   if (!userId) {
     throw new Error('[Run] userId is required in options for per-user model loading');
   }
@@ -111,7 +111,7 @@ export async function run(
   const conversationId = options.conversationId || red.memory.generateConversationId(message);
   
   // Extract messageId for Redis pub/sub (if provided) - this is the request/generation ID
-  const requestId = (options as any).messageId;
+  const requestId = options.messageId;
   
   // Generate separate message IDs for user and assistant messages
   // Use provided userMessageId from frontend if available, otherwise generate one

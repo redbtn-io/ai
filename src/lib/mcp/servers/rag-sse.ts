@@ -15,8 +15,18 @@ export class RagServerSSE extends McpServerSSE {
 
   constructor(name: string, version: string, port: number = 3003, chromaUrl?: string, ollamaUrl?: string) {
     super(name, version, port);
-    this.chromaUrl = chromaUrl || process.env.CHROMA_URL || 'http://localhost:8024';
-    this.ollamaUrl = ollamaUrl || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+    const resolvedChromaUrl = chromaUrl || process.env.CHROMA_URL;
+    const resolvedOllamaUrl = ollamaUrl || process.env.OLLAMA_BASE_URL;
+    
+    if (!resolvedChromaUrl) {
+      throw new Error('[RAG Server SSE] CHROMA_URL environment variable is required');
+    }
+    if (!resolvedOllamaUrl) {
+      throw new Error('[RAG Server SSE] OLLAMA_BASE_URL environment variable is required');
+    }
+    
+    this.chromaUrl = resolvedChromaUrl;
+    this.ollamaUrl = resolvedOllamaUrl;
     
     // Initialize vector store manager
     this.vectorStore = new VectorStoreManager(this.chromaUrl, this.ollamaUrl);
