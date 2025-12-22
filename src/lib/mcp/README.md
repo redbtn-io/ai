@@ -5,6 +5,10 @@ A complete implementation of the Model Context Protocol (MCP) using JSON-RPC 2.0
 1. **Stdio Transport** (Primary) - For internal, tightly-coupled tools
 2. **Redis/HTTP Transport** (Secondary) - For external, distributed tools
 
+**Version**: 2.0  
+**Last Updated**: January 2025  
+**Status**: Production Ready
+
 ## Overview
 
 This implementation follows the MCP specification with flexible transport layers:
@@ -277,6 +281,48 @@ const systemServer = new SystemServer(redis, {
   allowedCommands: ['ls', 'cat', 'pwd', 'echo'],
   workingDirectory: '/path/to/work'
 });
+```
+
+### RAG Server
+
+Vector store and Knowledge Library operations:
+
+**Core Tools (Raw Vector Access):**
+- `add_to_vector_store` - Add documents to a vector collection
+- `search_vector_store` - Search a raw vector collection by ID
+
+**Knowledge Library Tools:**
+- `list_libraries` - List all libraries accessible to a user
+  ```json
+  { "userId": "user123", "includeShared": true, "includePublic": true }
+  ```
+- `search_library` - Search a specific library by ID
+  ```json
+  { "libraryId": "lib-xxx", "query": "search text", "userId": "user123", "limit": 5 }
+  ```
+- `search_all_libraries` - Search across all user's accessible libraries
+  ```json
+  { "userId": "user123", "query": "search text", "limit": 3, "includeShared": true }
+  ```
+- `get_library_info` - Get library metadata and document list
+  ```json
+  { "libraryId": "lib-xxx", "userId": "user123" }
+  ```
+
+**Usage from Nodes:**
+```json
+{
+  "type": "tool",
+  "config": {
+    "toolName": "search_all_libraries",
+    "parameters": {
+      "userId": "{{state.data.options.userId}}",
+      "query": "{{state.data.query.message}}",
+      "limit": 3
+    },
+    "outputField": "data.knowledgeResults"
+  }
+}
 ```
 
 ## Running the Servers

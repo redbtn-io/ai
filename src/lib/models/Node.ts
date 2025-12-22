@@ -665,9 +665,20 @@ export async function searchNodes(options: NodeSearchOptions = {}): Promise<{ no
   }
   // If status === 'all', don't add any status filter
   
-  // Text search
+  // Text search - use regex for partial matching (more flexible than $text)
   if (query) {
-    conditions.push({ $text: { $search: query } });
+    // Escape special regex characters and create case-insensitive pattern
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const searchRegex = new RegExp(escapedQuery, 'i');
+    
+    // Search in name, description, and tags with partial matching
+    conditions.push({
+      $or: [
+        { name: searchRegex },
+        { description: searchRegex },
+        { tags: searchRegex }
+      ]
+    });
   }
   
   // Tag filter
@@ -700,11 +711,6 @@ export async function searchNodes(options: NodeSearchOptions = {}): Promise<{ no
     lastUsedAt: 'stats.lastUsedAt'
   };
   const sort: any = { [sortFields[sortBy] || 'name']: sortOrder === 'desc' ? -1 : 1 };
-  
-  // Add text score sorting if text search is used
-  if (query) {
-    sort.score = { $meta: 'textScore' };
-  }
   
   const [nodes, total] = await Promise.all([
     NodeModel.find(filter)

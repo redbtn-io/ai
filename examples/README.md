@@ -2,6 +2,10 @@
 
 This directory contains working examples of how to use the Red AI library in different contexts. Each example is self-contained with its own dependencies to avoid cluttering the main library.
 
+**Version**: 2.0  
+**Last Updated**: January 2025  
+**Status**: Production Ready
+
 ## 📂 Available Examples
 
 ### 🤖 [Discord Bot](./discord)

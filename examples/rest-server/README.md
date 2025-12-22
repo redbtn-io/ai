@@ -2,6 +2,10 @@
 
 This example demonstrates how to run Red AI as an OpenAI-compatible API server. This allows you to use Red AI with any tool that supports the OpenAI API format, including OpenWebUI, Cursor, Continue, and more.
 
+**Version**: 2.0  
+**Last Updated**: January 2025  
+**Status**: Production Ready
+
 ## Quick Start
 
 ### 1. Install dependencies

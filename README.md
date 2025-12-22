@@ -6,6 +6,10 @@
 
 > A dynamic, graph-based AI agent library built on LangChain and LangGraph with MCP (Model Context Protocol) integration, per-user model configuration, and tier-based access control. Provides intelligent routing, persistent memory, and unified streaming/non-streaming interfaces.
 
+**Version**: 2.0  
+**Last Updated**: January 2025  
+**Build Status**: ✅ Compiles successfully
+
 ---
 
 ## Table of Contents

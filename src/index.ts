@@ -94,6 +94,17 @@ export {
 } from "./lib/models/Node";
 export type { NodeSearchOptions } from "./lib/models/Node";
 
+// Export Document Parsers
+export {
+  DocumentParser,
+  PDFParser,
+  DocxParser,
+  TextParser,
+  MarkdownParser,
+  ImageParser,
+} from "./lib/parsers";
+export type { ParsedDocument, ParseOptions } from "./lib/parsers";
+
 // --- Type Definitions ---
 
 /**

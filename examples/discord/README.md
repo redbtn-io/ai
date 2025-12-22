@@ -2,6 +2,10 @@
 
 A full-featured Discord bot interface for Red AI that responds when mentioned in channels, maintaining conversation context and handling multi-user conversations.
 
+**Version**: 2.0  
+**Last Updated**: January 2025  
+**Status**: Production Ready
+
 ## Features
 
 - ✅ **Tag-based activation** - Bot responds only when mentioned/tagged

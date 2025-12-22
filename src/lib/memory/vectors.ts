@@ -12,10 +12,7 @@
  */
 
 import { countTokens } from '../utils/tokenizer';
-
-// Mock types for ChromaDB
-type ChromaClient = any;
-type Collection = any;
+import { ChromaClient, Collection } from 'chromadb';
 
 // --- Configuration Constants ---
 
@@ -139,12 +136,11 @@ export class VectorStoreManager {
     this.embeddingModel = embeddingModel;
     
     // Initialize ChromaDB client
-    // this.client = new ChromaClient({
-    //   path: chromaUrl
-    // });
-    this.client = {}; // Mock client
+    this.client = new ChromaClient({
+      path: chromaUrl
+    });
     
-    console.log(`[VectorStore] Initialized with ChromaDB at ${chromaUrl} (MOCKED)`);
+    console.log(`[VectorStore] Initialized with ChromaDB at ${chromaUrl}`);
     console.log(`[VectorStore] Using embedding model: ${embeddingModel} via ${ollamaUrl}`);
   }
 
@@ -242,14 +238,35 @@ export class VectorStoreManager {
       return [text];
     }
 
+    // Helper to split a large text into fixed-size chunks
+    const splitLargeText = (largeText: string): string[] => {
+      const result: string[] = [];
+      let start = 0;
+      while (start < largeText.length) {
+        const end = Math.min(start + chunkSize, largeText.length);
+        result.push(largeText.slice(start, end));
+        start += chunkSize - chunkOverlap;
+        if (end >= largeText.length) break;
+      }
+      return result;
+    };
+
     // Try to split by paragraphs if requested
     if (preserveParagraphs) {
       const paragraphs = text.split(/\n\n+/);
       let currentChunk = '';
 
       for (const para of paragraphs) {
-        // If paragraph alone is too big, it will be split in the fallback logic
-        if ((currentChunk + para).length <= chunkSize) {
+        // If paragraph alone is too big, split it
+        if (para.length > chunkSize) {
+          // Save current chunk first
+          if (currentChunk) {
+            chunks.push(currentChunk);
+            currentChunk = '';
+          }
+          // Split the large paragraph and add all pieces
+          chunks.push(...splitLargeText(para));
+        } else if ((currentChunk + para).length <= chunkSize) {
           currentChunk += (currentChunk ? '\n\n' : '') + para;
         } else {
           // Save current chunk if it exists
@@ -267,33 +284,24 @@ export class VectorStoreManager {
       }
 
       // If we got reasonable chunks, apply overlap and return
-      if (chunks.length > 1 && chunks.every(c => c.length <= chunkSize * 1.5)) {
+      if (chunks.length > 1) {
+        console.log(
+          `[VectorStore] Chunked text: ${text.length} chars -> ${chunks.length} chunks ` +
+          `(size: ${chunkSize}, overlap: ${chunkOverlap})`
+        );
         return this.applyChunkOverlap(chunks, chunkOverlap);
       }
     }
 
     // Fallback: split by fixed size with overlap
-    let startIndex = 0;
-    while (startIndex < text.length) {
-      const endIndex = Math.min(startIndex + chunkSize, text.length);
-      const chunk = text.slice(startIndex, endIndex);
-      chunks.push(chunk);
-      
-      // Move forward by (chunkSize - overlap) to create overlap
-      startIndex += chunkSize - chunkOverlap;
-      
-      // Break if we've reached the end
-      if (endIndex >= text.length) {
-        break;
-      }
-    }
+    const fallbackChunks = splitLargeText(text);
 
     console.log(
-      `[VectorStore] Chunked text: ${text.length} chars -> ${chunks.length} chunks ` +
+      `[VectorStore] Chunked text: ${text.length} chars -> ${fallbackChunks.length} chunks ` +
       `(size: ${chunkSize}, overlap: ${chunkOverlap})`
     );
 
-    return chunks;
+    return fallbackChunks;
   }
 
   /**
@@ -334,22 +342,15 @@ export class VectorStoreManager {
     metadata?: Record<string, any>
   ): Promise<Collection> {
     try {
-      // const collection = await this.client.getOrCreateCollection({
-      //   name: collectionName,
-      //   metadata: {
-      //     ...metadata,
-      //     'hnsw:space': 'cosine'  // Use cosine similarity instead of L2
-      //   }
-      // });
-      const collection = {
-        add: async () => {},
-        query: async () => ({ ids: [], documents: [], metadatas: [], distances: [] }),
-        delete: async () => {},
-        count: async () => 0,
-        metadata: {}
-      };
+      const collection = await this.client.getOrCreateCollection({
+        name: collectionName,
+        metadata: {
+          ...metadata,
+          'hnsw:space': 'cosine'  // Use cosine similarity instead of L2
+        }
+      });
       
-      console.log(`[VectorStore] Using collection: ${collectionName} (cosine similarity) (MOCKED)`);
+      console.log(`[VectorStore] Using collection: ${collectionName} (cosine similarity)`);
       return collection;
     } catch (error) {
       console.error(`[VectorStore] Failed to get/create collection ${collectionName}:`, error);
@@ -416,12 +417,20 @@ export class VectorStoreManager {
       // Chunk the text
       const textChunks = await this.chunkText(text, chunkingConfig);
 
+      // Filter out undefined/null values from metadata (ChromaDB requirement)
+      const cleanMetadata: Record<string, any> = {};
+      for (const [key, value] of Object.entries(metadata)) {
+        if (value !== undefined && value !== null) {
+          cleanMetadata[key] = value;
+        }
+      }
+
       // Create document chunks with metadata
       const chunks: DocumentChunk[] = textChunks.map((chunk, index) => ({
-        id: `${metadata.source || 'doc'}_chunk_${index}_${Date.now()}`,
+        id: `${cleanMetadata.documentId || cleanMetadata.source || 'doc'}_chunk_${index}_${Date.now()}`,
         text: chunk,
         metadata: {
-          ...metadata,
+          ...cleanMetadata,
           chunkIndex: index,
           totalChunks: textChunks.length,
           timestamp: Date.now()
@@ -624,6 +633,49 @@ export class VectorStoreManager {
     } catch (error) {
       console.error('[VectorStore] Health check failed:', error);
       return false;
+    }
+  }
+
+  /**
+   * Get all documents from a collection matching a metadata filter
+   * @param collectionName Name of the collection
+   * @param filter Metadata filter (e.g., { documentId: 'doc_xyz' })
+   * @returns Array of documents with their metadata
+   */
+  async getDocumentsByFilter(
+    collectionName: string,
+    filter: Record<string, unknown>
+  ): Promise<Array<{ id: string; text: string; metadata: Record<string, unknown> }>> {
+    try {
+      const collection = await this.getOrCreateCollection(collectionName);
+
+      // Use ChromaDB's get() with where filter
+      // Cast filter to any to avoid TypeScript issues with ChromaDB's Where type
+      const results = await collection.get({
+        where: filter as any,
+        include: ['documents', 'metadatas']
+      });
+
+      const documents: Array<{ id: string; text: string; metadata: Record<string, unknown> }> = [];
+
+      if (results.ids && results.ids.length > 0) {
+        for (let i = 0; i < results.ids.length; i++) {
+          documents.push({
+            id: results.ids[i],
+            text: results.documents?.[i] ?? '',
+            metadata: (results.metadatas?.[i] as Record<string, unknown>) ?? {},
+          });
+        }
+      }
+
+      console.log(
+        `[VectorStore] Get by filter in ${collectionName}: found ${documents.length} documents`
+      );
+
+      return documents;
+    } catch (error) {
+      console.error('[VectorStore] Get by filter failed:', error);
+      throw error;
     }
   }
 }
