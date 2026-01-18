@@ -26,7 +26,15 @@
     "db:update-user-graphs": "npx tsx scripts/update-user-graph-defaults.ts",
     "migrate-universal-nodes": "npx tsx src/scripts/migrate-universal-nodes.ts",
     "verify-universal-nodes": "npx tsx src/scripts/verify-universal-nodes.ts",
-    "seed-default-graphs": "npx tsx src/scripts/seed-default-graphs.ts"
+    "seed-default-graphs": "npx tsx src/scripts/seed-default-graphs.ts",
+    "lint": "eslint src --fix",
+    "lint:check": "eslint src",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,tsx}": [
+      "eslint --fix"
+    ]
   },
   "author": "",
   "license": "ISC",
@@ -55,13 +63,21 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
     "@types/pdf-parse": "^1.1.5",
+    "@typescript-eslint/eslint-plugin": "^8.53.0",
+    "@typescript-eslint/parser": "^8.53.0",
     "@vitest/ui": "^4.0.15",
+    "eslint": "^9.39.2",
+    "eslint-plugin-unused-imports": "^4.3.0",
     "happy-dom": "^20.0.11",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.53.0",
     "vitest": "^4.0.15"
   }
 }
