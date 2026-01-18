@@ -8,6 +8,47 @@
 import type { ToolStepConfig } from '../types';
 import { renderParameters } from '../templateRenderer';
 import { executeWithErrorHandling } from './errorHandler';
+import type { RunPublisher } from '../../../run/run-publisher';
+
+// Debug logging - set to true to enable verbose logs
+const DEBUG = false;
+
+/**
+ * Normalize tool step config by converting legacy inputMapping format to parameters format
+ * 
+ * Legacy format (UI): { toolName, inputMapping: { field1: value1, ... }, outputField }
+ * New format (execution): { toolName, parameters: { field1: value1, ... }, outputField }
+ * 
+ * @param config - Tool step configuration that may use legacy format
+ * @returns Normalized config with parameters field
+ */
+function normalizeToolStepConfig(config: any): ToolStepConfig {
+  const normalized = { ...config };
+  
+  // Convert legacy inputMapping to parameters
+  if (config.inputMapping && !config.parameters) {
+    if (typeof config.inputMapping === 'object' && config.inputMapping !== null) {
+      normalized.parameters = config.inputMapping;
+    } else if (typeof config.inputMapping === 'string' && config.inputMapping.trim()) {
+      // Legacy single string format - try to parse as object
+      try {
+        normalized.parameters = JSON.parse(config.inputMapping);
+      } catch {
+        // Treat as single parameter value
+        normalized.parameters = { value: config.inputMapping };
+      }
+    } else {
+      normalized.parameters = {};
+    }
+  }
+  
+  // Ensure parameters is always an object
+  if (!normalized.parameters || typeof normalized.parameters !== 'object') {
+    normalized.parameters = {};
+  }
+  
+  return normalized;
+}
 
 /**
  * Execute a tool step (with error handling wrapper)
@@ -20,20 +61,23 @@ export async function executeTool(
   config: ToolStepConfig,
   state: any
 ): Promise<Partial<any>> {
+  // Normalize legacy config format
+  const normalizedConfig = normalizeToolStepConfig(config);
+  
   // If error handling configured (new way), use it
-  if (config.errorHandling) {
+  if (normalizedConfig.errorHandling) {
     return executeWithErrorHandling(
-      () => executeToolInternal(config, state),
-      config.errorHandling,
+      () => executeToolInternal(normalizedConfig, state),
+      normalizedConfig.errorHandling,
       { 
         type: 'tool', 
-        field: config.outputField 
+        field: normalizedConfig.outputField 
       }
     );
   }
   
   // Otherwise use legacy retry logic (backward compatibility)
-  return executeToolInternal(config, state);
+  return executeToolInternal(normalizedConfig, state);
 }
 
 /**
@@ -56,6 +100,23 @@ async function executeToolInternal(
 ): Promise<Partial<any>> {
     const logger = state.logger;
     
+    // Validate required fields
+    if (!config.toolName) {
+      throw new Error('Tool step missing required field: toolName');
+    }
+    if (!config.outputField) {
+      throw new Error('Tool step missing required field: outputField');
+    }
+    if (!config.parameters || typeof config.parameters !== 'object') {
+      throw new Error(`Tool step "${config.toolName}" missing or invalid parameters object`);
+    }
+    
+    // Get RunPublisher for tool events (only available in run path)
+    const runPublisher = state.runPublisher as RunPublisher | undefined;
+    
+    // Generate unique tool execution ID
+    const toolId = `tool_${config.toolName}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    
     try {
     // Get MCP client from state (it's the registry)
     const mcpClient = state.mcpClient;
@@ -66,13 +127,17 @@ async function executeToolInternal(
     // Render parameter templates with current state
     const renderedParams = renderParameters(config.parameters, state);
     
-    console.log('[ToolExecutor] Executing tool step', {
+    if (DEBUG) console.log('[ToolExecutor] Executing tool step', {
       toolName: config.toolName,
-      parameters: renderedParams,
-      outputField: config.outputField,
-      retryOnError: config.retryOnError,
-      maxRetries: config.maxRetries
+      outputField: config.outputField
     });
+    
+    // Emit tool_start event
+    if (runPublisher) {
+      await runPublisher.toolStart(toolId, config.toolName, 'mcp', {
+        input: renderedParams
+      });
+    }
     
     // Get metadata for tool execution
     // Note: messageId is in state.data.messageId (set by respond.ts initialState)
@@ -82,10 +147,9 @@ async function executeToolInternal(
       messageId: state.messageId || state.data?.messageId
     };
     
-    console.log('[ToolExecutor] Tool meta for event publishing:', {
+    if (DEBUG) console.log('[ToolExecutor] Tool meta for event publishing:', {
       conversationId: meta.conversationId,
-      messageId: meta.messageId,
-      hasMessageQueue: !!state.messageQueue
+      messageId: meta.messageId
     });
     
     // Execute with retry logic
@@ -94,17 +158,23 @@ async function executeToolInternal(
     
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        // Call tool via registry (handles server lookup and execution)
-        console.log(`[ToolExecutor] Calling mcpClient.callTool: ${config.toolName}`);
-        const result = await mcpClient.callTool(config.toolName, renderedParams, meta);
-        console.log(`[ToolExecutor] mcpClient.callTool returned for ${config.toolName}`);
+        // Emit retry progress if not first attempt
+        if (attempt > 0 && runPublisher) {
+          await runPublisher.toolProgress(toolId, `retry_${attempt}`, {
+            progress: attempt / (maxRetries + 1),
+            data: { attempt, maxRetries }
+          });
+        }
         
-        console.log('[ToolExecutor] Tool call succeeded', {
+        // Call tool via registry (handles server lookup and execution)
+        if (DEBUG) console.log(`[ToolExecutor] Calling mcpClient.callTool: ${config.toolName}`);
+        const result = await mcpClient.callTool(config.toolName, renderedParams, meta);
+        if (DEBUG) console.log(`[ToolExecutor] mcpClient.callTool returned for ${config.toolName}`);
+        
+        if (DEBUG) console.log('[ToolExecutor] Tool call succeeded', {
           toolName: config.toolName,
           outputField: config.outputField,
-          attempt: attempt + 1,
-          resultType: typeof result,
-          isError: result?.isError
+          attempt: attempt + 1
         });
         
         // Check if result is serializable BEFORE processing
@@ -161,6 +231,14 @@ async function executeToolInternal(
           }
         }
         
+        // Emit tool_complete event
+        if (runPublisher) {
+          await runPublisher.toolComplete(toolId, serializedResult, {
+            outputField: config.outputField,
+            attempts: attempt + 1
+          });
+        }
+        
         // Return output field
         return {
           [config.outputField]: serializedResult
@@ -184,21 +262,33 @@ async function executeToolInternal(
       }
     }
     
-    // All retries exhausted
+    // All retries exhausted - emit tool_error
+    const errorMessage = lastError?.message || 'Tool call failed';
+    if (runPublisher) {
+      await runPublisher.toolError(toolId, errorMessage);
+    }
+    
     console.error('[ToolExecutor] Tool step failed after retries', {
       toolName: config.toolName,
       outputField: config.outputField,
       attempts: maxRetries + 1,
-      error: lastError?.message
+      error: errorMessage
     });
     throw lastError || new Error('Tool call failed');
     
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    // Emit tool_error if not already emitted (for non-retry errors)
+    if (runPublisher) {
+      await runPublisher.toolError(toolId, errorMessage);
+    }
+    
     console.error('[ToolExecutor] Tool step failed', {
       toolName: config.toolName,
       outputField: config.outputField,
-      error: error instanceof Error ? error.message : String(error)
+      error: errorMessage
     });
-    throw new Error(`Tool step failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Tool step failed: ${errorMessage}`);
   }
 }

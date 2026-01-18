@@ -17,16 +17,29 @@ import { RedGraphState } from './state';
 /**
  * Creates a configurable node wrapper that injects config into the state
  * This allows nodes to access custom configuration from GraphNodeConfig
+ * 
+ * @param nodeFn The node function to wrap
+ * @param graphNodeId The graph node ID (e.g., "context-1768684860197-u6xweb") - used for event publishing
+ * @param nodeType The node type (e.g., "context", "universal") - used for registry lookup
+ * @param config Optional additional configuration for the node
  */
 function createConfigurableNode(
   nodeFn: NodeFunction,
-  config: Record<string, any>
+  graphNodeId: string,
+  nodeType: string,
+  config: Record<string, any> = {}
 ): NodeFunction {
   return async (state: any) => {
     // Inject node config into state so the node can access it
+    // - graphNodeId: Used for event publishing (the unique node instance in this graph)
+    // - nodeId: Used for registry lookup (either explicit config.nodeId or the node type)
     const enhancedState = {
       ...state,
-      nodeConfig: config
+      nodeConfig: {
+        ...config,
+        graphNodeId,  // The graph-specific node ID for event publishing
+        nodeId: config.nodeId || nodeType  // Registry lookup: explicit nodeId or fall back to node type
+      }
     };
     
     return await nodeFn(enhancedState);
@@ -62,10 +75,10 @@ export function compileGraphFromConfig(config: GraphConfig): CompiledGraph {
     
     console.log(`[GraphCompiler]   Adding node: ${node.id} (type: ${node.type})`);
     
-    // Wrap node function to inject config if provided
-    const wrappedFn = node.config 
-      ? createConfigurableNode(nodeFn, node.config)
-      : nodeFn;
+    // Always wrap node function to inject nodeId, nodeType, and config
+    // This ensures events are published with the correct graph node ID
+    // and the universal node can look up config by node type or explicit nodeId
+    const wrappedFn = createConfigurableNode(nodeFn, node.id, node.type, node.config || {});
     
     builder.addNode(node.id, wrappedFn);
   }
@@ -75,8 +88,8 @@ export function compileGraphFromConfig(config: GraphConfig): CompiledGraph {
   if (!config.nodes.some(n => n.id === 'error_handler')) {
     console.log(`[GraphCompiler]   Adding system node: error_handler`);
     const universalFn = NODE_REGISTRY['universal'];
-    // Create a virtual node config that points to the registry entry
-    const errorHandlerFn = createConfigurableNode(universalFn, { nodeId: 'error_handler' });
+    // Create a virtual node config that points to the registry entry (error_handler node type)
+    const errorHandlerFn = createConfigurableNode(universalFn, 'error_handler', 'universal', {});
     builder.addNode('error_handler', errorHandlerFn);
   }
   

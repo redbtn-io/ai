@@ -52,6 +52,16 @@ export class NeuronProviderError extends Error {
 }
 
 /**
+ * Runtime overrides that can be applied per-invocation
+ * These override the neuron's stored configuration
+ */
+export interface ModelOverrides {
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+}
+
+/**
  * NeuronRegistry - Dynamic model loading and management
  */
 export class NeuronRegistry {
@@ -85,21 +95,30 @@ export class NeuronRegistry {
    * 
    * @param neuronId The neuron identifier (e.g., "red-neuron", "red-smart")
    * @param userId The requesting user's ID
+   * @param overrides Optional runtime overrides for temperature, maxTokens, etc.
    * @returns Configured LangChain chat model
    * @throws NeuronNotFoundError if neuron doesn't exist
    * @throws NeuronAccessDeniedError if user lacks permission
    * @throws NeuronProviderError if model creation fails
    */
-  async getModel(neuronId: string, userId: string): Promise<BaseChatModel> {
+  async getModel(neuronId: string, userId: string, overrides?: ModelOverrides): Promise<BaseChatModel> {
     // Load config (cached)
     const config = await this.getConfig(neuronId, userId);
+    
+    // Apply runtime overrides if provided
+    const effectiveConfig = overrides ? {
+      ...config,
+      temperature: overrides.temperature ?? config.temperature,
+      maxTokens: overrides.maxTokens ?? config.maxTokens,
+      topP: overrides.topP ?? config.topP
+    } : config;
     
     // Validate access permissions
     await this.validateAccess(config, userId);
     
     // Create model instance with error handling
     try {
-      return this.createModel(config);
+      return this.createModel(effectiveConfig);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new NeuronProviderError(

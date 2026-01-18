@@ -5,7 +5,7 @@
 
 import Redis from 'ioredis';
 import { countTokens, freeTiktoken } from '../utils/tokenizer';
-import { getDatabase, StoredMessage, StoredToolExecution } from './database';
+import { getDatabase, StoredMessage, StoredToolExecution, StoredGraphRun } from './database';
 
 export interface ConversationMessage {
   id?: string; // Optional message ID (e.g., msg_1234567890_abc123def)
@@ -13,6 +13,7 @@ export interface ConversationMessage {
   content: string;
   timestamp: number;
   toolExecutions?: StoredToolExecution[]; // Tool executions for this message
+  graphRun?: StoredGraphRun; // Graph execution history for this message
 }
 
 export interface ConversationMetadata {
@@ -167,6 +168,7 @@ export class MemoryManager {
         content: message.content,
         timestamp: new Date(message.timestamp),
         toolExecutions: message.toolExecutions || [],
+        graphRun: message.graphRun,
         metadata: {}
       }, userId).catch(err => {
         console.error('[Memory] Failed to save message to MongoDB:', err.message);

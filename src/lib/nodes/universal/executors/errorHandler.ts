@@ -7,6 +7,9 @@
 
 import type { ErrorHandlingConfig } from '../types';
 
+// Debug logging - set to true to enable verbose logs
+const DEBUG = false;
+
 /**
  * Execute an async operation with error handling (retry, fallback, skip)
  * 
@@ -31,14 +34,14 @@ export async function executeWithErrorHandling<T>(
   let lastError: Error | null = null;
   let attempt = 0;
   
-  console.log(`[ErrorHandler] Executing ${stepInfo?.type || 'step'}${stepInfo?.number ? ` ${stepInfo.number}` : ''} (max retries: ${retry})`);
+  if (DEBUG) console.log(`[ErrorHandler] Executing ${stepInfo?.type || 'step'} (max retries: ${retry})`);
   
   // Try initial execution + retries
   while (attempt <= retry) {
     try {
       const result = await operation();
       
-      if (attempt > 0) {
+      if (attempt > 0 && DEBUG) {
         console.log(`[ErrorHandler] ${stepInfo?.type || 'Step'} succeeded on retry ${attempt}/${retry}`);
       }
       
@@ -55,7 +58,7 @@ export async function executeWithErrorHandling<T>(
       
       // If we have retries left, wait and try again
       if (attempt <= retry) {
-        console.log(`[ErrorHandler] Retrying in ${retryDelay}ms...`);
+        if (DEBUG) console.log(`[ErrorHandler] Retrying in ${retryDelay}ms...`);
         await new Promise(resolve => setTimeout(resolve, retryDelay));
         continue;
       }
@@ -72,14 +75,14 @@ export async function executeWithErrorHandling<T>(
   
   switch (onError) {
     case 'fallback':
-      console.log(
+      if (DEBUG) console.log(
         `[ErrorHandler] Using fallback value for ${stepInfo?.field || 'output'}:`,
         JSON.stringify(fallbackValue).substring(0, 100)
       );
       return fallbackValue as T;
       
     case 'skip':
-      console.log(`[ErrorHandler] Skipping ${stepInfo?.type || 'step'}, will return undefined`);
+      if (DEBUG) console.log(`[ErrorHandler] Skipping ${stepInfo?.type || 'step'}`);
       return undefined as T;
       
     case 'throw':

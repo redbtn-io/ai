@@ -6,7 +6,6 @@
 import { Redis } from 'ioredis';
 import { McpServer } from '../server';
 import { CallToolResult } from '../types';
-import { McpEventPublisher } from '../event-publisher';
 import { MemoryManager, ConversationMessage } from '../../memory/memory';
 import { getDatabase, StoredToolExecution } from '../../memory/database';
 import { countTokens } from '../../utils/tokenizer';
@@ -317,46 +316,40 @@ export class ContextServer extends McpServer {
    */
   private async getMessages(
     args: Record<string, unknown>,
-    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+    _meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const conversationId = args.conversationId as string;
     const limit = (args.limit as number) || 100;
     const source = (args.source as string) || 'auto';
     const includeToolExecutions = args.includeToolExecutions !== false;
-    const startTime = args.startTime as number | undefined;
-    const endTime = args.endTime as number | undefined;
+    const filterStartTime = args.startTime as number | undefined;
+    const filterEndTime = args.endTime as number | undefined;
 
-    const publisher = new McpEventPublisher(this.publishRedis, 'context_get_messages', 'Get Messages', meta);
-
-    await publisher.publishStart({ input: { conversationId, limit, source } });
-    await publisher.publishLog('info', `📨 Fetching messages from ${conversationId}`);
+    const startTime = Date.now();
+    console.log(`[Context Server] 📨 Fetching messages from ${conversationId}`);
 
     try {
       let messages: ConversationMessage[];
 
       // Fetch based on source
       if (source === 'database') {
-        await publisher.publishProgress('Fetching from MongoDB...', { progress: 30 });
         messages = await this.memoryManager.getAllMessagesFromDB(conversationId);
       } else if (source === 'cache') {
-        await publisher.publishProgress('Fetching from Redis cache...', { progress: 30 });
         messages = await this.memoryManager.getMessages(conversationId);
       } else {
         // Auto: try cache first, fall back to database
-        await publisher.publishProgress('Fetching from cache...', { progress: 20 });
         messages = await this.memoryManager.getMessages(conversationId);
         
         if (messages.length === 0) {
-          await publisher.publishProgress('Cache empty, fetching from database...', { progress: 50 });
           messages = await this.memoryManager.getAllMessagesFromDB(conversationId);
         }
       }
 
       // Apply time filters if provided
-      if (startTime || endTime) {
+      if (filterStartTime || filterEndTime) {
         messages = messages.filter(msg => {
-          if (startTime && msg.timestamp < startTime) return false;
-          if (endTime && msg.timestamp > endTime) return false;
+          if (filterStartTime && msg.timestamp < filterStartTime) return false;
+          if (filterEndTime && msg.timestamp > filterEndTime) return false;
           return true;
         });
       }
@@ -374,10 +367,8 @@ export class ContextServer extends McpServer {
         }));
       }
 
-      const duration = publisher.getDuration();
-
-      await publisher.publishLog('success', `✓ Fetched ${messages.length} messages in ${duration}ms`);
-      await publisher.publishComplete({ messageCount: messages.length, duration });
+      const duration = Date.now() - startTime;
+      console.log(`[Context Server] ✓ Fetched ${messages.length} messages in ${duration}ms`);
 
       // Format output
       const result = {
@@ -401,10 +392,8 @@ export class ContextServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to fetch messages: ${errorMessage}`, { duration });
+      const duration = Date.now() - startTime;
+      console.error(`[Context Server] ✗ Failed to fetch messages: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -421,7 +410,7 @@ export class ContextServer extends McpServer {
    */
   private async getContextHistory(
     args: Record<string, unknown>,
-    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+    _meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const conversationId = args.conversationId as string;
     const maxTokens = (args.maxTokens as number) || 30000;
@@ -431,14 +420,11 @@ export class ContextServer extends McpServer {
     const includeSystemPrompt = args.includeSystemPrompt === true;
     const systemPromptText = args.systemPromptText as string | undefined;
 
-    const publisher = new McpEventPublisher(this.publishRedis, 'context_get_history', 'Get Context History', meta);
-
-    await publisher.publishStart({ input: { conversationId, maxTokens, format } });
-    await publisher.publishLog('info', `📚 Building context history for ${conversationId}`);
+    const startTime = Date.now();
+    console.log(`[Context Server] 📚 Building context history for ${conversationId} (maxTokens: ${maxTokens}, format: ${format})`);
 
     try {
       // Fetch summary if requested
-      await publisher.publishProgress('Fetching summary...', { progress: 20 });
       let trailingSummary = null;
       let executiveSummary = null;
 
@@ -452,25 +438,16 @@ export class ContextServer extends McpServer {
       }
 
       // Fetch recent messages within token limit
-      await publisher.publishProgress('Fetching recent messages...', { progress: 40 });
       const recentMessages = await this.memoryManager.getContextForConversation(conversationId);
 
       // Calculate token counts
-      await publisher.publishProgress('Calculating token counts...', { progress: 60 });
       let totalTokens = 0;
       for (const msg of recentMessages) {
         totalTokens += await this.countMessageTokens(msg);
       }
 
-      const duration = publisher.getDuration();
-
-      await publisher.publishLog('success', `✓ Built context: ${recentMessages.length} messages, ${totalTokens} tokens in ${duration}ms`);
-      await publisher.publishComplete({
-        messageCount: recentMessages.length,
-        totalTokens,
-        hasSummary: !!(trailingSummary || executiveSummary),
-        duration
-      });
+      const duration = Date.now() - startTime;
+      console.log(`[Context Server] ✓ Built context: ${recentMessages.length} messages, ${totalTokens} tokens in ${duration}ms`);
 
       // Format output based on requested format
       if (format === 'raw') {
@@ -561,10 +538,8 @@ export class ContextServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to build context: ${errorMessage}`, { duration });
+      const duration = Date.now() - startTime;
+      console.error(`[Context Server] ✗ Failed to build context: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -581,15 +556,13 @@ export class ContextServer extends McpServer {
    */
   private async getSummary(
     args: Record<string, unknown>,
-    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+    _meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const conversationId = args.conversationId as string;
     const summaryType = (args.summaryType as string) || 'trailing';
 
-    const publisher = new McpEventPublisher(this.publishRedis, 'context_get_summary', 'Get Summary', meta);
-
-    await publisher.publishStart({ input: { conversationId, summaryType } });
-    await publisher.publishLog('info', `📄 Fetching ${summaryType} summary for ${conversationId}`);
+    const startTime = Date.now();
+    console.log(`[Context Server] 📄 Fetching ${summaryType} summary for ${conversationId}`);
 
     try {
       let trailingSummary = null;
@@ -602,10 +575,8 @@ export class ContextServer extends McpServer {
         executiveSummary = await this.memoryManager.getExecutiveSummary(conversationId);
       }
 
-      const duration = publisher.getDuration();
-
-      await publisher.publishLog('success', `✓ Retrieved summary in ${duration}ms`);
-      await publisher.publishComplete({ duration });
+      const duration = Date.now() - startTime;
+      console.log(`[Context Server] ✓ Retrieved summary in ${duration}ms`);
 
       let result: any = { conversationId };
 
@@ -627,10 +598,8 @@ export class ContextServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to get summary: ${errorMessage}`, { duration });
+      const duration = Date.now() - startTime;
+      console.error(`[Context Server] ✗ Failed to get summary: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -647,7 +616,7 @@ export class ContextServer extends McpServer {
    */
   private async storeMessage(
     args: Record<string, unknown>,
-    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+    _meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const conversationId = args.conversationId as string;
     const userId = args.userId as string;
@@ -655,14 +624,12 @@ export class ContextServer extends McpServer {
     const content = args.content as string;
     const messageId = args.messageId as string | undefined;
     const toolExecutions = args.toolExecutions as StoredToolExecution[] | undefined;
-    const metadata = args.metadata as Record<string, any> | undefined;
+    const _metadata = args.metadata as Record<string, any> | undefined;
 
-    const publisher = new McpEventPublisher(this.publishRedis, 'context_store_message', 'Store Message', meta);
-
-    await publisher.publishStart({ input: { conversationId, userId, role } });
-    console.log(`[Context MCP] storeMessage called - conversationId:${conversationId}, userId:${userId}, role:${role}, messageId:${messageId}, content length:${content?.length}`);
-    console.log(`[Context MCP] toolExecutions received:`, toolExecutions ? toolExecutions.length : 'undefined', toolExecutions ? JSON.stringify(toolExecutions).substring(0, 200) : '');
-    await publisher.publishLog('info', `💾 Storing ${role} message in ${conversationId} for user ${userId}`);
+    const startTime = Date.now();
+    console.log(`[Context Server] 💾 Storing ${role} message in ${conversationId} for user ${userId}`);
+    console.log(`[Context Server] storeMessage called - conversationId:${conversationId}, userId:${userId}, role:${role}, messageId:${messageId}, content length:${content?.length}`);
+    console.log(`[Context Server] toolExecutions received:`, toolExecutions ? toolExecutions.length : 'undefined', toolExecutions ? JSON.stringify(toolExecutions).substring(0, 200) : '');
 
     try {
       // Generate message ID if not provided
@@ -677,15 +644,13 @@ export class ContextServer extends McpServer {
         toolExecutions
       };
 
-      console.log(`[Context MCP] About to call addMessage - messageId:${finalMessageId}, userId:${userId}, role:${role}`);
+      console.log(`[Context Server] About to call addMessage - messageId:${finalMessageId}, userId:${userId}, role:${role}`);
       // Store via memory manager (handles both Redis and MongoDB)
       await this.memoryManager.addMessage(conversationId, message, userId);
-      console.log(`[Context MCP] addMessage completed - messageId:${finalMessageId}`);
+      console.log(`[Context Server] addMessage completed - messageId:${finalMessageId}`);
 
-      const duration = publisher.getDuration();
-
-      await publisher.publishLog('success', `✓ Message stored in ${duration}ms`);
-      await publisher.publishComplete({ messageId: finalMessageId, duration });
+      const duration = Date.now() - startTime;
+      console.log(`[Context Server] ✓ Message stored in ${duration}ms`);
 
       return {
         content: [{
@@ -701,10 +666,8 @@ export class ContextServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to store message: ${errorMessage}`, { duration });
+      const duration = Date.now() - startTime;
+      console.error(`[Context Server] ✗ Failed to store message: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -721,15 +684,13 @@ export class ContextServer extends McpServer {
    */
   private async getConversationMetadata(
     args: Record<string, unknown>,
-    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+    _meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const conversationId = args.conversationId as string;
     const includeTokenCount = args.includeTokenCount === true;
 
-    const publisher = new McpEventPublisher(this.publishRedis, 'context_get_metadata', 'Get Metadata', meta);
-
-    await publisher.publishStart({ input: { conversationId } });
-    await publisher.publishLog('info', `ℹ️ Fetching metadata for ${conversationId}`);
+    const startTime = Date.now();
+    console.log(`[Context Server] ℹ️ Fetching metadata for ${conversationId}`);
 
     try {
       // Get metadata from Redis
@@ -741,14 +702,11 @@ export class ContextServer extends McpServer {
 
       // Optionally calculate current token count
       if (includeTokenCount) {
-        await publisher.publishProgress('Calculating token count...', { progress: 50 });
         metadata.totalTokens = await this.memoryManager.getTokenCount(conversationId);
       }
 
-      const duration = publisher.getDuration();
-
-      await publisher.publishLog('success', `✓ Retrieved metadata in ${duration}ms`);
-      await publisher.publishComplete({ duration });
+      const duration = Date.now() - startTime;
+      console.log(`[Context Server] ✓ Retrieved metadata in ${duration}ms`);
 
       return {
         content: [{
@@ -759,10 +717,8 @@ export class ContextServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to get metadata: ${errorMessage}`, { duration });
+      const duration = Date.now() - startTime;
+      console.error(`[Context Server] ✗ Failed to get metadata: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -779,16 +735,14 @@ export class ContextServer extends McpServer {
    */
   private async getTokenCount(
     args: Record<string, unknown>,
-    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+    _meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const conversationId = args.conversationId as string | undefined;
     const text = args.text as string | undefined;
     const messages = args.messages as Array<{ role: string; content: string }> | undefined;
 
-    const publisher = new McpEventPublisher(this.publishRedis, 'context_get_tokens', 'Get Token Count', meta);
-
-    await publisher.publishStart({ input: { hasConversationId: !!conversationId, hasText: !!text, hasMessages: !!messages } });
-    await publisher.publishLog('info', '🔢 Calculating token count');
+    const startTime = Date.now();
+    console.log('[Context Server] 🔢 Calculating token count');
 
     try {
       let tokenCount = 0;
@@ -810,10 +764,8 @@ export class ContextServer extends McpServer {
         throw new Error('Must provide conversationId, text, or messages');
       }
 
-      const duration = publisher.getDuration();
-
-      await publisher.publishLog('success', `✓ Token count: ${tokenCount} in ${duration}ms`);
-      await publisher.publishComplete({ tokenCount, duration });
+      const duration = Date.now() - startTime;
+      console.log(`[Context Server] ✓ Token count: ${tokenCount} in ${duration}ms`);
 
       return {
         content: [{
@@ -824,10 +776,8 @@ export class ContextServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to count tokens: ${errorMessage}`, { duration });
+      const duration = Date.now() - startTime;
+      console.error(`[Context Server] ✗ Failed to count tokens: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -844,7 +794,7 @@ export class ContextServer extends McpServer {
    */
   private async listConversations(
     args: Record<string, unknown>,
-    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+    _meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const userId = args.userId as string;
     const limit = (args.limit as number) || 50;
@@ -860,20 +810,16 @@ export class ContextServer extends McpServer {
       };
     }
 
-    const publisher = new McpEventPublisher(this.publishRedis, 'context_list_conversations', 'List Conversations', meta);
-
-    await publisher.publishStart({ input: { userId, limit, skip } });
-    await publisher.publishLog('info', `📋 Listing conversations for user ${userId} (limit: ${limit}, skip: ${skip})`);
+    const startTime = Date.now();
+    console.log(`[Context Server] 📋 Listing conversations for user ${userId} (limit: ${limit}, skip: ${skip})`);
 
     try {
       // Fetch from MongoDB
       const db = getDatabase();
       const conversations = await db.getConversations(userId, limit, skip);
 
-      const duration = publisher.getDuration();
-
-      await publisher.publishLog('success', `✓ Found ${conversations.length} conversations in ${duration}ms`);
-      await publisher.publishComplete({ count: conversations.length, duration });
+      const duration = Date.now() - startTime;
+      console.log(`[Context Server] ✓ Found ${conversations.length} conversations in ${duration}ms`);
 
       return {
         content: [{
@@ -895,10 +841,8 @@ export class ContextServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to list conversations: ${errorMessage}`, { duration });
+      const duration = Date.now() - startTime;
+      console.error(`[Context Server] ✗ Failed to list conversations: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -929,28 +873,19 @@ export class ContextServer extends McpServer {
    */
   private async patternMatcher(
     args: Record<string, unknown>,
-    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+    _meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const query = args.query as string;
-    const publisher = new McpEventPublisher(this.publishRedis, 'context_pattern_matcher', 'Pattern Matcher', meta);
-
-    await publisher.publishStart({ input: { query } });
+    const startTime = Date.now();
 
     try {
       // Import the pattern matcher function
       const { patternMatcher } = await import('../tools/pattern-matcher/index.js');
       
       const result = await patternMatcher({ query });
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
 
-      await publisher.publishLog('info', `Pattern matcher: ${result.matched ? 'matched' : 'no match'}`, {
-        pattern: result.pattern,
-        confidence: result.confidence,
-        category: result.category,
-        duration
-      });
-
-      await publisher.publishComplete({ output: result });
+      console.log(`[Context Server] Pattern matcher: ${result.matched ? 'matched' : 'no match'} (pattern: ${result.pattern}, confidence: ${result.confidence}, category: ${result.category}) in ${duration}ms`);
 
       return {
         content: [{
@@ -962,10 +897,8 @@ export class ContextServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Pattern matcher failed: ${errorMessage}`, { duration });
+      const duration = Date.now() - startTime;
+      console.error(`[Context Server] ✗ Pattern matcher failed: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{

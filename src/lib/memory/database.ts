@@ -20,7 +20,7 @@ import Thought, { IThought, ThoughtDocument } from '../models/Thought';
 // ============================================================================
 
 export type { IMessage as StoredMessage } from '../models/Message';
-export type { IToolStep as StoredToolStep, IToolExecution as StoredToolExecution } from '../models/Message';
+export type { IToolStep as StoredToolStep, IToolExecution as StoredToolExecution, INodeProgress as StoredNodeProgress, IGraphRun as StoredGraphRun } from '../models/Message';
 export type { IConversation as Conversation } from '../models/Conversation';
 export type { ILog as StoredLog } from '../models/Log';
 export type { IGeneration as Generation } from '../models/Generation';

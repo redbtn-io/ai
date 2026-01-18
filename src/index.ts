@@ -16,6 +16,15 @@ import { run as runFunction } from "./functions/run";
 import { McpRegistry } from "./lib/mcp/registry";
 import { StdioServerPool } from "./lib/mcp/stdio-pool";
 
+// Export run types and function
+export {
+  run,
+  isStreamingResult,
+  type RunOptions,
+  type RunResult,
+  type StreamingRunResult,
+} from "./functions/run";
+
 // Export database utilities for external use
 export { 
   getDatabase, 
@@ -38,6 +47,14 @@ export { PersistentLogger } from "./lib/logs/persistent-logger";
 // Export thinking utilities for DeepSeek-R1 and similar models
 export { extractThinking, logThinking, extractAndLogThinking } from "./lib/utils/thinking";
 
+// Export Global State for cross-workflow persistence
+export {
+  GlobalStateClient,
+  getGlobalStateClient,
+  getGlobalValue,
+  setGlobalValue,
+} from "./lib/globalState";
+
 // Export RAG (Retrieval-Augmented Generation) components
 export { 
   VectorStoreManager,
@@ -59,6 +76,35 @@ export {
   CallToolResult,
   ServerRegistration,
 } from "./lib/mcp";
+
+// Export Run system components (unified execution)
+export {
+  // Publisher
+  RunPublisher,
+  type RunPublisherOptions,
+  type RunSubscription,
+  createRunPublisher,
+  getRunState,
+  getActiveRunForConversation,
+  // Lock
+  RunLock,
+  type LockResult,
+  type AcquireLockOptions,
+  type RunLockHandle,
+  createRunLock,
+  acquireRunLock,
+  isConversationLocked,
+  isGraphLocked, // deprecated
+  // Types
+  type RunState,
+  type RunStatus,
+  type RunOutput,
+  type RunEvent,
+  type RunEventType,
+  RunKeys,
+  RunConfig,
+  createInitialRunState,
+} from "./lib/run";
 
 // Export Neuron system components
 export {
@@ -354,15 +400,24 @@ export class Red {
   }
 
   /**
-   * Executes a graph with the provided input.
-   * Automatically manages conversation history, memory, and summarization.
+   * Executes a graph with the provided input using the unified run system.
+   * Publishes events via RunPublisher for SSE streaming.
    * @param input The input data for the graph. For agent graphs, should include 'message' property.
    * @param options Metadata about the source of the request and execution settings
-   * @returns For non-streaming: the full AIMessage object with content, tokens, metadata, and conversationId.
-   *          For streaming: an async generator that yields metadata first (with conversationId), then string chunks, then finally the full AIMessage.
+   * @returns RunResult with content, tokens, graphTrace, and runId (streaming handled externally via SSE)
    */
-  public async run(input: Record<string, any> = {}, options: InvokeOptions = {}): Promise<any | AsyncGenerator<string | any, void, unknown>> {
-    return runFunction(this, input, options);
+  public async run(input: Record<string, any> = {}, options: InvokeOptions = {}): Promise<any> {
+    if (!options.userId) {
+      throw new Error('userId is required for run()');
+    }
+    return runFunction(this, input, {
+      userId: options.userId,
+      graphId: options.graphId,
+      conversationId: options.conversationId,
+      runId: options.runId,
+      stream: options.stream,
+      source: options.source,
+    });
   }
 
   /**

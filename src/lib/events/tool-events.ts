@@ -10,7 +10,14 @@ export type ToolEventType =
   | 'tool_start'      // Tool execution begins
   | 'tool_progress'   // Incremental progress update
   | 'tool_complete'   // Tool execution finished successfully
-  | 'tool_error';     // Tool execution failed
+  | 'tool_error'      // Tool execution failed
+  | 'graph_start'     // Graph execution begins
+  | 'graph_complete'  // Graph execution finished
+  | 'graph_error'     // Graph execution failed
+  | 'node_start'      // Node execution begins
+  | 'node_progress'   // Node step progress (e.g., thinking, calling model)
+  | 'node_complete'   // Node execution finished
+  | 'node_error';     // Node execution failed
 
 export type ToolType = 
   | 'thinking'        // AI reasoning/planning
@@ -96,3 +103,127 @@ export type ToolEvent =
 export const createToolId = (toolType: ToolType, messageId: string): string => {
   return `${toolType}_${messageId}_${Date.now()}`;
 };
+
+// ============================================================================
+// Graph & Node Events (for visual graph viewer)
+// ============================================================================
+
+/**
+ * Graph execution start event
+ */
+export interface GraphStartEvent {
+  type: 'graph_start';
+  graphId: string;            // Graph ID
+  graphName: string;          // Graph name
+  messageId: string;          // Associated message ID
+  conversationId: string;     // Associated conversation ID
+  runId: string;              // Unique run ID
+  timestamp: number;
+  nodeCount: number;          // Total nodes in graph
+  entryNodeId: string;        // Starting node ID
+}
+
+/**
+ * Graph execution complete event
+ */
+export interface GraphCompleteEvent {
+  type: 'graph_complete';
+  graphId: string;
+  runId: string;
+  messageId: string;
+  conversationId: string;
+  timestamp: number;
+  exitNodeId?: string;        // Final node executed
+  totalDuration: number;      // Total execution time in ms
+  nodesExecuted: number;      // Number of nodes executed
+}
+
+/**
+ * Graph execution error event
+ */
+export interface GraphErrorEvent {
+  type: 'graph_error';
+  graphId: string;
+  runId: string;
+  messageId: string;
+  conversationId: string;
+  timestamp: number;
+  error: string;
+  failedNodeId?: string;
+}
+
+/**
+ * Node execution start event
+ */
+export interface NodeStartEvent {
+  type: 'node_start';
+  graphId: string;
+  runId: string;
+  nodeId: string;
+  nodeType: string;           // e.g., 'neuron', 'router', 'planner'
+  nodeName: string;           // Human-readable name
+  messageId: string;
+  conversationId: string;
+  timestamp: number;
+}
+
+/**
+ * Node step progress event
+ */
+export interface NodeProgressEvent {
+  type: 'node_progress';
+  graphId: string;
+  runId: string;
+  nodeId: string;
+  messageId: string;
+  conversationId: string;
+  timestamp: number;
+  stepName: string;           // e.g., 'building_prompt', 'calling_model', 'parsing_output'
+  stepIndex?: number;         // Optional step index
+  totalSteps?: number;        // Optional total steps
+  data?: any;                 // Step-specific data
+}
+
+/**
+ * Node execution complete event
+ */
+export interface NodeCompleteEvent {
+  type: 'node_complete';
+  graphId: string;
+  runId: string;
+  nodeId: string;
+  messageId: string;
+  conversationId: string;
+  timestamp: number;
+  duration: number;           // Execution time in ms
+  nextNodeId?: string;        // Next node in the chain (if any)
+  output?: any;               // Sanitized output (optional)
+}
+
+/**
+ * Node execution error event
+ */
+export interface NodeErrorEvent {
+  type: 'node_error';
+  graphId: string;
+  runId: string;
+  nodeId: string;
+  messageId: string;
+  conversationId: string;
+  timestamp: number;
+  error: string;
+  willRetry?: boolean;
+  retryCount?: number;
+}
+
+/**
+ * Union type of all graph/node events
+ */
+export type GraphEvent = 
+  | GraphStartEvent 
+  | GraphCompleteEvent 
+  | GraphErrorEvent
+  | NodeStartEvent
+  | NodeProgressEvent
+  | NodeCompleteEvent
+  | NodeErrorEvent;

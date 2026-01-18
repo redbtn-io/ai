@@ -8,6 +8,10 @@
 import type { TransformStepConfig } from '../types';
 import { renderTemplate } from '../templateRenderer';
 import { extractJSON } from '../../../utils/json-extractor';
+import { getGlobalStateClient } from '../../../globalState';
+
+// Debug logging - set to true to enable verbose logs
+const DEBUG = false;
 
 /**
  * Execute a transform step
@@ -16,38 +20,63 @@ import { extractJSON } from '../../../utils/json-extractor';
  * - map: Apply transform template to each array element
  * - filter: Keep array elements where filterCondition evaluates to true
  * - select: Extract nested property from input using dot notation
+ * - set-global: Set a value in persistent global state
+ * - get-global: Get a value from persistent global state
  * 
  * @param config - Transform step configuration
  * @param state - Current graph state (includes accumulated updates from previous steps)
  * @returns Partial state with output field set to transformed data
  */
-export function executeTransform(
+export async function executeTransform(
   config: TransformStepConfig,
   state: any
-): Partial<any> {
+): Promise<Partial<any>> {
   try {
     // build-messages doesn't require inputField
     let inputData: any = undefined;
     
     if (config.inputField) {
-      // Get input data from state (handles nested paths)
-      inputData = getNestedProperty(state, config.inputField);
-      
-      // Fallback: try data. prefix if not found (migration support)
-      if (inputData === undefined && !config.inputField.startsWith('data.') && !config.inputField.startsWith('state.')) {
-        const dataPath = `data.${config.inputField}`;
-        const dataValue = getNestedProperty(state, dataPath);
-        if (dataValue !== undefined) {
-          console.log(`[TransformExecutor] Legacy field '${config.inputField}' not found, using '${dataPath}' instead`);
-          inputData = dataValue;
+      // Smart Global State Detection for inputField:
+      // If inputField starts with 'globalState.', read from global state
+      if (config.inputField.startsWith('globalState.')) {
+        const parts = config.inputField.split('.');
+        if (parts.length < 3) {
+          throw new Error(`Invalid globalState path: ${config.inputField}. Expected format: globalState.namespace.key`);
+        }
+        
+        const namespace = parts[1];
+        const key = parts[2];
+        
+        if (DEBUG) console.log(`[TransformExecutor] Auto-detected global state read: ${namespace}.${key}`);
+        
+        // Pass userId for authentication
+        const client = getGlobalStateClient({
+          userId: state.data?.userId || state.userId,
+          workflowId: state.data?.graphId || state.graphId,
+        });
+        inputData = await client.getValue(namespace, key);
+      } else {
+        // Get input data from state (handles nested paths)
+        inputData = getNestedProperty(state, config.inputField);
+        
+        // Fallback: try data. prefix if not found (migration support)
+        if (inputData === undefined && !config.inputField.startsWith('data.') && !config.inputField.startsWith('state.')) {
+          const dataPath = `data.${config.inputField}`;
+          const dataValue = getNestedProperty(state, dataPath);
+          if (dataValue !== undefined) {
+            if (DEBUG) console.log(`[TransformExecutor] Using data. prefix for '${config.inputField}'`);
+            inputData = dataValue;
+          }
         }
       }
     }
     
-    // Append, build-messages, set, and concat (with fallback) operations allow undefined input
+    // Append, build-messages, set, set-global, get-global, and concat (with fallback) operations allow undefined input
     const allowUndefinedInput = config.operation === 'append' || 
                                 config.operation === 'build-messages' || 
                                 config.operation === 'set' ||
+                                config.operation === 'set-global' ||
+                                config.operation === 'get-global' ||
                                 (config.operation === 'concat' && (config as any).fallbackToConcat);
     
     if (inputData === undefined && !allowUndefinedInput) {
@@ -90,8 +119,53 @@ export function executeTransform(
         result = executeBuildMessagesOperation(config, state);
         break;
       
+      case 'set-global':
+        result = await executeSetGlobalOperation(config, inputData, state);
+        break;
+      
+      case 'get-global':
+        result = await executeGetGlobalOperation(config, state);
+        break;
+      
       default:
         throw new Error(`Unknown transform operation: ${(config as any).operation}`);
+    }
+    
+    // Smart Global State Detection:
+    // If outputField starts with 'globalState.', automatically route to global state storage
+    // Example: outputField='globalState.JOEL.counter' -> namespace='JOEL', key='counter'
+    if (config.outputField && config.outputField.startsWith('globalState.')) {
+      const parts = config.outputField.split('.');
+      if (parts.length < 3) {
+        throw new Error(`Invalid globalState path: ${config.outputField}. Expected format: globalState.namespace.key`);
+      }
+      
+      const namespace = parts[1];
+      const key = parts[2];
+      
+      if (DEBUG) console.log(`[TransformExecutor] Auto-detected global state: ${namespace}.${key}`);
+      
+      // Route to global state storage - pass userId for authentication
+      const client = getGlobalStateClient({
+        userId: state.data?.userId || state.userId,
+        workflowId: state.data?.graphId || state.graphId,
+      });
+      
+      const success = await client.setValue(
+        namespace,
+        key,
+        result,
+        {
+          description: config.description,
+          ttlSeconds: config.ttlSeconds,
+        }
+      );
+      
+      // Return metadata about the operation
+      return {
+        _globalStateSet: success,
+        _globalStateKey: `${namespace}.${key}`,
+      };
     }
     
     // Return output field.
@@ -307,7 +381,7 @@ function executeParseJsonOperation(
     const extracted = extractJSON(inputData);
     
     if (extracted) {
-      console.log('[TransformExecutor] ✓ Extracted JSON from noisy LLM response using robust parser');
+      if (DEBUG) console.log('[TransformExecutor] Extracted JSON from noisy LLM response');
       return extracted;
     }
     
@@ -342,33 +416,19 @@ function executeSetOperation(
   
   // If value is a boolean, number, or null, return it directly without string conversion
   if (typeof config.value === 'boolean' || typeof config.value === 'number' || config.value === null) {
-    console.log('[SetOperation] Returning primitive value:', {
-      value: config.value,
-      type: typeof config.value
-    });
+    if (DEBUG) console.log('[SetOperation] Returning primitive value:', config.value);
     return config.value;
   }
   
   const valueStr = String(config.value);
   
-  console.log('[SetOperation] Processing value:', {
-    valueStr,
-    isTemplate: valueStr.startsWith('{{') && valueStr.endsWith('}}')
-  });
+  if (DEBUG) console.log('[SetOperation] Processing value:', valueStr);
   
   // If it's a template expression, evaluate it as JavaScript
   if (valueStr.startsWith('{{') && valueStr.endsWith('}}')) {
     const expression = valueStr.slice(2, -2); // Remove '{{' and '}}'
     
-    console.log('[SetOperation] Evaluating expression:', expression);
-    
-    // Debug executor step 1 evaluation
-    if (expression.includes('executorAwaitingReturn')) {
-      console.log('[SetOperation] DEBUG - state.data.executorAwaitingReturn:', state.data?.executorAwaitingReturn);
-      console.log('[SetOperation] DEBUG - typeof:', typeof state.data?.executorAwaitingReturn);
-      console.log('[SetOperation] DEBUG - === true:', state.data?.executorAwaitingReturn === true);
-      console.log('[SetOperation] DEBUG - currentStepIndex:', state.data?.currentStepIndex);
-    }
+    if (DEBUG) console.log('[SetOperation] Evaluating expression:', expression);
     
     try {
       // Create a function that evaluates the expression with state in scope
@@ -376,10 +436,7 @@ function executeSetOperation(
       const evalFunc = new Function('state', `return ${expression}`);
       const result = evalFunc(state);
       
-      console.log('[SetOperation] Evaluation result:', {
-        resultType: typeof result,
-        resultValue: result
-      });
+      if (DEBUG) console.log('[SetOperation] Evaluation result:', typeof result);
       
       return result;
     } catch (error) {
@@ -389,7 +446,7 @@ function executeSetOperation(
   }
   
   // Otherwise try template rendering for simple substitutions
-  console.log('[SetOperation] Using template rendering');
+  if (DEBUG) console.log('[SetOperation] Using template rendering');
   return renderTemplate(valueStr, state);
 }
 
@@ -431,17 +488,11 @@ function executeAppendOperation(
     
     if (!shouldAppend) {
       // Condition is false, return array unchanged
-      console.log('[TransformExecutor] Append condition false, skipping append', {
-        condition: config.condition,
-        evaluatedTo: conditionStr
-      });
+      if (DEBUG) console.log('[TransformExecutor] Append condition false, skipping');
       return array;
     }
     
-    console.log('[TransformExecutor] Append condition true, appending value', {
-      condition: config.condition,
-      evaluatedTo: conditionStr
-    });
+    if (DEBUG) console.log('[TransformExecutor] Append condition true, appending');
   }
   
   // Render value if it contains template syntax
@@ -504,6 +555,7 @@ function executeConcatOperation(
   inputData: any,
   state: any
 ): any[] {
+  // fallbackToConcat: if either array is missing, use the one that exists (or empty array if both missing)
   const fallbackToConcat = (config as any).fallbackToConcat;
   const fallbackToInput = (config as any).fallbackToInput;
   
@@ -522,44 +574,58 @@ function executeConcatOperation(
     const dataPath = `data.${secondArrayField}`;
     const dataValue = getNestedProperty(state, dataPath);
     if (Array.isArray(dataValue)) {
-      console.log(`[ConcatOperation] Legacy field '${secondArrayField}' not found, using '${dataPath}' instead`);
+      if (DEBUG) console.log(`[ConcatOperation] Using data. prefix for '${secondArrayField}'`);
       secondArray = dataValue;
     }
   }
   
-  console.log('[ConcatOperation] Concatenating arrays:', {
-    inputField: config.inputField,
-    inputLength: Array.isArray(inputData) ? inputData.length : 'NOT_ARRAY',
-    secondArrayField,
-    secondArrayLength: Array.isArray(secondArray) ? secondArray.length : 'NOT_ARRAY',
-    outputField: config.outputField
+  const inputIsArray = Array.isArray(inputData);
+  const secondIsArray = Array.isArray(secondArray);
+  
+  if (DEBUG) console.log('[ConcatOperation] Concatenating arrays:', {
+    inputLength: inputIsArray ? inputData.length : 'N/A',
+    secondArrayLength: secondIsArray ? secondArray.length : 'N/A'
   });
   
-  // Handle fallback scenarios
-  if (inputData === undefined || !Array.isArray(inputData)) {
-    if (fallbackToConcat && Array.isArray(secondArray)) {
-      console.log('[ConcatOperation] Using fallback: only secondArray');
-      // Use only secondArray
+  // With fallbackToConcat: gracefully handle missing arrays
+  if (fallbackToConcat) {
+    let result: any[];
+    if (inputIsArray && secondIsArray) {
+      result = [...inputData, ...secondArray];
+    } else if (inputIsArray) {
+      // Only input exists, use it
+      result = [...inputData];
+    } else if (secondIsArray) {
+      // Only second array exists, use it
+      result = [...secondArray];
+    } else {
+      // Neither exists, return empty array
+      result = [];
+    }
+    console.log('[ConcatOperation] Returning result with', result.length, 'items');
+    return result;
+  }
+  
+  // Handle fallback scenarios (strict mode)
+  if (inputData === undefined || !inputIsArray) {
+    if (secondIsArray) {
+      if (DEBUG) console.log('[ConcatOperation] Using fallback: only secondArray');
       return [...secondArray];
     }
     throw new Error('Concat operation requires input to be an array');
   }
   
-  if (!Array.isArray(secondArray)) {
+  if (!secondIsArray) {
     if (fallbackToInput) {
-      console.log('[ConcatOperation] Using fallback: only inputData');
-      // Use only inputData
+      if (DEBUG) console.log('[ConcatOperation] Using fallback: only inputData');
       return [...inputData];
     }
     throw new Error(`Concat operation requires second array at ${secondArrayField} to be an array`);
   }
   
   // Both arrays exist, concat them
-  console.log('[ConcatOperation] Concatenating:', inputData.length, '+', secondArray.length, '=', inputData.length + secondArray.length);
-  if (config.outputField === 'messages') {
-    console.log('[ConcatOperation] === MESSAGES CONCAT ===');
-    console.log('[ConcatOperation] Input array (first):', inputData.map((m: any) => `${m.role}: ${m.content?.substring(0, 50)}...`));
-    console.log('[ConcatOperation] Second array:', secondArray.map((m: any) => `${m.role}: ${m.content?.substring(0, 50)}...`));
+  if (DEBUG) {
+    console.log('[ConcatOperation] Concatenating:', inputData.length, '+', secondArray.length);
   }
   return [...inputData, ...secondArray];
 }
@@ -626,4 +692,118 @@ function executeBuildMessagesOperation(
   }
   
   return builtMessages;
+}
+
+/**
+ * Set Global State Operation
+ * 
+ * Sets a value in persistent global state that can be accessed across workflows.
+ * 
+ * Config:
+ * - namespace: Target namespace (required)
+ * - key: Key to set (required, or use inputField value)
+ * - inputField: Source field containing the value to set
+ * - value: Static value to set (if inputField not provided)
+ * - ttlSeconds: Optional TTL for auto-expiration
+ * - description: Optional description
+ * 
+ * Example:
+ * {
+ *   operation: 'set-global',
+ *   namespace: 'user-settings',
+ *   key: 'theme',
+ *   inputField: 'data.selectedTheme'
+ * }
+ */
+async function executeSetGlobalOperation(
+  config: TransformStepConfig,
+  inputData: any,
+  state: any
+): Promise<any> {
+  if (!config.namespace) {
+    throw new Error('set-global operation requires namespace');
+  }
+  
+  if (!config.key) {
+    throw new Error('set-global operation requires key');
+  }
+  
+  // Get value from inputData, config.value, or render as template
+  let valueToSet = inputData;
+  if (valueToSet === undefined && config.value !== undefined) {
+    valueToSet = typeof config.value === 'string' 
+      ? renderTemplate(config.value, state) 
+      : config.value;
+  }
+  
+  if (valueToSet === undefined) {
+    console.warn(`[SetGlobalOperation] No value to set for ${config.namespace}.${config.key}`);
+    return { _globalStateSet: false };
+  }
+  
+  const client = getGlobalStateClient({
+    userId: state.data?.userId || state.userId,
+    workflowId: state.data?.graphId || state.graphId,
+  });
+  
+  const success = await client.setValue(
+    config.namespace,
+    config.key,
+    valueToSet,
+    {
+      description: config.description,
+      ttlSeconds: config.ttlSeconds,
+    }
+  );
+  
+  if (DEBUG) console.log(`[SetGlobalOperation] Set ${config.namespace}.${config.key}`);
+  
+  // Return metadata about the operation
+  return {
+    _globalStateSet: success,
+    _globalStateKey: `${config.namespace}.${config.key}`,
+  };
+}
+
+/**
+ * Get Global State Operation
+ * 
+ * Gets a value from persistent global state.
+ * 
+ * Config:
+ * - namespace: Source namespace (required)
+ * - key: Key to get (required)
+ * - outputField: Where to store the retrieved value
+ * 
+ * Example:
+ * {
+ *   operation: 'get-global',
+ *   namespace: 'user-settings',
+ *   key: 'theme',
+ *   outputField: 'data.userTheme'
+ * }
+ */
+async function executeGetGlobalOperation(
+  config: TransformStepConfig,
+  state: any
+): Promise<any> {
+  if (!config.namespace) {
+    throw new Error('get-global operation requires namespace');
+  }
+  
+  if (!config.key) {
+    throw new Error('get-global operation requires key');
+  }
+  
+  const client = getGlobalStateClient({
+    userId: state.data?.userId || state.userId,
+    workflowId: state.data?.graphId || state.graphId,
+  });
+  
+  const value = await client.getValue(config.namespace, config.key);
+  
+  if (DEBUG) console.log(`[GetGlobalOperation] Got ${config.namespace}.${config.key}`);
+  
+  // Return the value to be stored in outputField
+  return value;
 }

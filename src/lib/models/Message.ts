@@ -37,6 +37,36 @@ export interface IToolExecution {
 }
 
 /**
+ * Node progress interface for graph run tracking
+ */
+export interface INodeProgress {
+  nodeId: string;
+  status: 'pending' | 'running' | 'completed' | 'error';
+  currentStep?: number;
+  totalSteps?: number;
+  stepName?: string;
+  startTime?: number;
+  endTime?: number;
+  error?: string;
+}
+
+/**
+ * Graph run interface for tracking graph execution history
+ */
+export interface IGraphRun {
+  graphId: string;
+  graphName?: string;
+  runId?: string;
+  status: 'running' | 'completed' | 'error';
+  executionPath: string[];
+  nodeProgress: Record<string, INodeProgress>;
+  startTime?: number;
+  endTime?: number;
+  duration?: number;
+  error?: string;
+}
+
+/**
  * Message document interface
  */
 export interface IMessage {
@@ -46,6 +76,7 @@ export interface IMessage {
   content: string;
   timestamp: Date;
   toolExecutions?: IToolExecution[];
+  graphRun?: IGraphRun;
   metadata?: {
     model?: string;
     tokens?: {
@@ -90,6 +121,36 @@ const ToolExecutionSchema = new Schema<IToolExecution>(
   { _id: false }
 );
 
+const NodeProgressSchema = new Schema<INodeProgress>(
+  {
+    nodeId: { type: String, required: true },
+    status: { type: String, enum: ['pending', 'running', 'completed', 'error'], required: true },
+    currentStep: Number,
+    totalSteps: Number,
+    stepName: String,
+    startTime: Number,
+    endTime: Number,
+    error: String,
+  },
+  { _id: false }
+);
+
+const GraphRunSchema = new Schema<IGraphRun>(
+  {
+    graphId: { type: String, required: true },
+    graphName: String,
+    runId: String,
+    status: { type: String, enum: ['running', 'completed', 'error'], required: true },
+    executionPath: [{ type: String }],
+    nodeProgress: { type: Schema.Types.Mixed, default: {} },
+    startTime: Number,
+    endTime: Number,
+    duration: Number,
+    error: String,
+  },
+  { _id: false }
+);
+
 const MessageSchema = new Schema<MessageDocument>(
   {
     messageId: { type: String, unique: true, sparse: true },
@@ -98,6 +159,7 @@ const MessageSchema = new Schema<MessageDocument>(
     content: { type: String, required: true },
     timestamp: { type: Date, required: true, index: true },
     toolExecutions: [ToolExecutionSchema],
+    graphRun: GraphRunSchema,
     metadata: {
       model: String,
       tokens: {

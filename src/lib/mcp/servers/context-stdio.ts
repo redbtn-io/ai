@@ -43,7 +43,9 @@ class ContextServerStdio extends McpServerStdio {
           userId: { type: 'string' },
           role: { type: 'string', enum: ['user', 'assistant', 'system'] },
           content: { type: 'string' },
-          messageId: { type: 'string' }
+          messageId: { type: 'string' },
+          toolExecutions: { type: 'array', description: 'Tool execution history' },
+          graphRun: { type: 'object', description: 'Graph execution history' }
         },
         required: ['conversationId', 'userId', 'role', 'content']
       }
@@ -215,19 +217,21 @@ class ContextServerStdio extends McpServerStdio {
 
   private async storeMessage(args: Record<string, unknown>, meta?: any): Promise<CallToolResult> {
     try {
-      const { conversationId, userId, role, content, messageId } = args as any;
+      const { conversationId, userId, role, content, messageId, toolExecutions, graphRun } = args as any;
 
-      const db = await getDatabase();
-      const message: any = {
+      const db = getDatabase();
+      const message = {
         conversationId,
-        userId,
         role,
         content,
         messageId: messageId || `msg_${Date.now()}`,
-        timestamp: new Date()
+        timestamp: new Date(),
+        toolExecutions: toolExecutions || [],
+        graphRun: graphRun || undefined,
+        metadata: {}
       };
 
-      await (await db.collection('messages')).insertOne(message);
+      await db.storeMessage(message, userId);
 
       return {
         content: [{

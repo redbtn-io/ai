@@ -49,7 +49,6 @@ export class MessageQueue {
   async markStreamReady(messageId: string): Promise<void> {
     const key = `${this.STREAM_READY_PREFIX}${messageId}`;
     await this.redis.setex(key, 60, '1'); // 60 second TTL
-    console.log(`[MessageQueue] Stream marked ready for ${messageId}`);
   }
 
   /**
@@ -63,7 +62,6 @@ export class MessageQueue {
     while (Date.now() - startTime < timeoutMs) {
       const ready = await this.redis.get(key);
       if (ready === '1') {
-        console.log(`[MessageQueue] Stream is ready for ${messageId}`);
         return true;
       }
       // Wait 50ms before checking again
@@ -102,8 +100,6 @@ export class MessageQueue {
       `${this.PUBSUB_PREFIX}${messageId}`,
       JSON.stringify({ type: 'status', action: 'initializing', description: 'Starting generation' })
     );
-
-    console.log(`[MessageQueue] Started generation tracking: ${messageId}`);
   }
 
   /**
@@ -162,23 +158,18 @@ export class MessageQueue {
       `${this.PUBSUB_PREFIX}${messageId}`,
       JSON.stringify({ type: 'complete', metadata })
     );
-
-    console.log(`[MessageQueue] Completed generation: ${messageId} (${state.content.length} chars)`);
   }
 
   /**
    * Publish tool status indicator (searching, scraping, etc.)
    */
   async publishToolStatus(messageId: string, toolInfo: { status: string; action: string; reasoning?: string; confidence?: number }): Promise<void> {
-    console.log(`[MessageQueue] publishToolStatus called for ${messageId}:`, toolInfo);
-    
     // Store in state so SSE connection can retrieve it
     const key = `${this.CONTENT_KEY_PREFIX}${messageId}`;
     const stateJson = await this.redis.get(key);
     
     if (stateJson) {
       const state: MessageGenerationState = JSON.parse(stateJson);
-      console.log(`[MessageQueue] Current state before update:`, { currentStatus: state.currentStatus });
       
       state.currentStatus = {
         action: toolInfo.action,
@@ -188,7 +179,6 @@ export class MessageQueue {
       };
       
       await this.redis.setex(key, this.STATE_TTL, JSON.stringify(state));
-      console.log(`[MessageQueue] Updated state.currentStatus to:`, state.currentStatus);
     } else {
       console.warn(`[MessageQueue] No state found for ${messageId}, cannot store tool status`);
     }
@@ -198,16 +188,12 @@ export class MessageQueue {
       `${this.PUBSUB_PREFIX}${messageId}`,
       JSON.stringify({ type: 'tool_status', ...toolInfo })
     );
-    
-    console.log(`[MessageQueue] Published tool_status event to pub/sub for ${messageId}`);
   }
 
   /**
    * Publish general status update (routing, thinking, processing, etc.)
    */
   async publishStatus(messageId: string, status: { action: string; description?: string; reasoning?: string; confidence?: number }): Promise<void> {
-    console.log(`[MessageQueue] Publishing status for ${messageId}:`, status.action);
-    
     // Store in state so SSE connection can retrieve it
     const key = `${this.CONTENT_KEY_PREFIX}${messageId}`;
     const stateJson = await this.redis.get(key);
@@ -250,7 +236,6 @@ export class MessageQueue {
    * Publish thinking complete event (when </think> tag is closed)
    */
   async publishThinkingComplete(messageId: string): Promise<void> {
-    console.log('[MessageQueue] Publishing thinking complete event for', messageId);
     await this.redis.publish(
       `${this.PUBSUB_PREFIX}${messageId}`,
       JSON.stringify({ type: 'thinkingComplete' })
@@ -273,6 +258,8 @@ export class MessageQueue {
       }
       state.toolEvents.push(event);
       await this.redis.setex(key, this.STATE_TTL, JSON.stringify(state));
+    } else {
+      console.warn(`[MessageQueue] No state found for ${messageId} when publishing tool event: ${event.type}`);
     }
     
     // Also publish to real-time pub/sub
@@ -280,10 +267,6 @@ export class MessageQueue {
       `${this.PUBSUB_PREFIX}${messageId}`,
       JSON.stringify({ type: 'tool_event', event })
     );
-    
-    if (event.type !== 'tool_progress') {
-      console.log(`[MessageQueue] Published tool event: ${event.type} for ${event.toolName || event.toolId}`);
-    }
   }
 
   /**
@@ -387,9 +370,15 @@ export class MessageQueue {
       yield { type: 'init', existingContent: state.content };
     }
     
+    // Yield existing tool events for reconnection (graph/node state recovery)
+    if (state.toolEvents && state.toolEvents.length > 0) {
+      for (const toolEvent of state.toolEvents) {
+        yield { type: 'tool_event', event: toolEvent };
+      }
+    }
+    
     // Yield current status if any (this is the key fix!)
     if (state.currentStatus) {
-      console.log(`[MessageQueue] Sending stored status to new SSE connection: ${state.currentStatus.action}`);
       yield { 
         type: state.currentStatus.action.includes('search') || state.currentStatus.action.includes('scrape') || state.currentStatus.action.includes('command') 
           ? 'tool_status' 
@@ -425,7 +414,6 @@ export class MessageQueue {
       try {
         await subscriber.unsubscribe(channel);
         await subscriber.quit();
-        console.log(`[MessageQueue] Cleaned up subscriber for ${messageId}`);
       } catch (e) {
         // Ignore cleanup errors
       }
@@ -433,7 +421,6 @@ export class MessageQueue {
 
     try {
       await subscriber.subscribe(channel);
-      console.log(`[MessageQueue] Redis subscription established for ${messageId}`);
 
       // Create a promise-based message handler
       const messageIterator = async function* (sub: Redis) {
@@ -486,5 +473,193 @@ export class MessageQueue {
     } finally {
       await cleanup();
     }
+  }
+
+  /**
+   * Subscribe to a message stream with explicit ready signal
+   * Returns a stream AND a ready promise that resolves when Redis subscription is established
+   * This prevents race conditions where events are published before subscription is active
+   */
+  subscribeToMessageWithReady(messageId: string): {
+    stream: AsyncGenerator<{
+      type: 'init' | 'chunk' | 'status' | 'thinking' | 'complete' | 'error' | 'tool_status' | 'tool_event';
+      content?: string;
+      thinking?: boolean;
+      existingContent?: string;
+      metadata?: MessageGenerationState['metadata'];
+      error?: string;
+      action?: string;
+      description?: string;
+      status?: string;
+      event?: any;
+    }>;
+    ready: Promise<void>;
+  } {
+    let resolveReady!: () => void;
+    const ready = new Promise<void>(resolve => { resolveReady = resolve; });
+    
+    const self = this;
+    
+    // Set up subscription BEFORE creating the generator
+    const subscriber = self.redis.duplicate();
+    subscriber.setMaxListeners(50);
+    const channel = `${self.PUBSUB_PREFIX}${messageId}`;
+    
+    // Use a proper async queue pattern instead of polling
+    type QueueItem = { type: 'message', data: string } | { type: 'done' };
+    const messageQueue: QueueItem[] = [];
+    let messageResolver: ((item: QueueItem) => void) | null = null;
+    
+    const pushMessage = (item: QueueItem) => {
+      if (messageResolver) {
+        const resolver = messageResolver;
+        messageResolver = null;
+        resolver(item);
+      } else {
+        messageQueue.push(item);
+      }
+    };
+    
+    const pullMessage = (): Promise<QueueItem> => {
+      if (messageQueue.length > 0) {
+        return Promise.resolve(messageQueue.shift()!);
+      }
+      return new Promise(resolve => {
+        messageResolver = resolve;
+      });
+    };
+    
+    let messageHandler: ((ch: string, msg: string) => void) | null = null;
+    
+    // Start subscription immediately
+    const subscriptionPromise = (async () => {
+      await subscriber.subscribe(channel);
+      
+      // Set up message handler that pushes to the async queue
+      messageHandler = (ch: string, msg: string) => {
+        if (ch === channel) {
+          pushMessage({ type: 'message', data: msg });
+        }
+      };
+      subscriber.on('message', messageHandler);
+      
+      resolveReady();
+    })();
+    
+    const stream = (async function* () {
+      // Wait for subscription to be established first
+      await subscriptionPromise;
+      
+      // Now get state and yield stored events
+      const state = await self.getMessageState(messageId);
+      if (!state) {
+        throw new Error(`Message ${messageId} not found`);
+      }
+
+      // Yield existing content if any
+      if (state.content) {
+        yield { type: 'init' as const, existingContent: state.content };
+      }
+      
+      // Yield existing tool events for reconnection (graph/node state recovery)
+      if (state.toolEvents && state.toolEvents.length > 0) {
+        for (const toolEvent of state.toolEvents) {
+          yield { type: 'tool_event' as const, event: toolEvent };
+        }
+      }
+      
+      // Yield current status if any
+      if (state.currentStatus) {
+        const isToolStatus = state.currentStatus.action.includes('search') || state.currentStatus.action.includes('scrape') || state.currentStatus.action.includes('command');
+        yield { 
+          type: isToolStatus ? 'tool_status' as const : 'status' as const,
+          action: state.currentStatus.action,
+          description: state.currentStatus.description,
+          status: state.currentStatus.description
+        };
+      }
+
+      // If already completed, just send completion event and cleanup
+      if (state.status === 'completed') {
+        yield { type: 'complete' as const, metadata: state.metadata };
+        await cleanup();
+        return;
+      }
+
+      if (state.status === 'error') {
+        yield { type: 'error' as const, error: state.error };
+        await cleanup();
+        return;
+      }
+
+      const getState = self.getMessageState.bind(self);
+      let cleanedUp = false;
+      
+      async function cleanup() {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        try {
+          if (messageHandler) {
+            subscriber.off('message', messageHandler);
+          }
+          await subscriber.unsubscribe(channel);
+          await subscriber.quit();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+
+      try {
+        // Set up a timeout checker
+        let lastActivityTime = Date.now();
+        const timeoutInterval = setInterval(async () => {
+          if (Date.now() - lastActivityTime > 30000) {
+            // 30 second timeout - check if generation is still active
+            const currentState = await getState(messageId);
+            if (!currentState || currentState.status !== 'generating') {
+              pushMessage({ type: 'done' });
+              clearInterval(timeoutInterval);
+            }
+          }
+        }, 5000);
+
+        // Consume messages from the async queue
+        while (true) {
+          const item = await pullMessage();
+          lastActivityTime = Date.now();
+          
+          if (item.type === 'done') {
+            clearInterval(timeoutInterval);
+            break;
+          }
+          
+          const event = JSON.parse(item.data);
+          
+          if (event.type === 'chunk') {
+            yield { type: 'chunk' as const, content: event.content, thinking: event.thinking };
+          } else if (event.type === 'status') {
+            yield { type: 'status' as const, action: event.action, description: event.description };
+          } else if (event.type === 'thinking') {
+            yield { type: 'thinking' as const, content: event.content };
+          } else if (event.type === 'tool_status') {
+            yield { type: 'tool_status' as const, status: event.status, action: event.action };
+          } else if (event.type === 'tool_event') {
+            yield { type: 'tool_event' as const, event: event.event };
+          } else if (event.type === 'complete') {
+            yield { type: 'complete' as const, metadata: event.metadata };
+            clearInterval(timeoutInterval);
+            break;
+          } else if (event.type === 'error') {
+            yield { type: 'error' as const, error: event.error };
+            clearInterval(timeoutInterval);
+            break;
+          }
+        }
+      } finally {
+        await cleanup();
+      }
+    })();
+    
+    return { stream, ready };
   }
 }

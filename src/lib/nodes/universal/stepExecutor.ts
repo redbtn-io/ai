@@ -41,13 +41,19 @@ export async function executeStep(
       return await executeTool(step.config as any, state);
     
     case 'transform':
-      return executeTransform(step.config as any, state);
+      return await executeTransform(step.config as any, state);
     
     case 'conditional':
       return executeConditional(step.config as any, state);
     
     case 'loop':
       return await executeLoop(step.config as any, state);
+    
+    case 'delay': {
+      const delayMs = (step.config as any)?.ms ?? 1000;
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      return {};
+    }
     
     default:
       throw new Error(`Unknown step type: ${(step as any).type}`);

@@ -6,7 +6,6 @@
 import { Redis } from 'ioredis';
 import { McpServer } from '../server';
 import { CallToolResult } from '../types';
-import { McpEventPublisher } from '../event-publisher';
 import { fetchAndParse } from '../../utils/scraper';
 
 export class WebServer extends McpServer {
@@ -63,6 +62,47 @@ export class WebServer extends McpServer {
       }
     });
 
+    // Define api_call tool
+    this.defineTool({
+      name: 'api_call',
+      description: 'Make an HTTP API call to any endpoint. Supports GET, POST, PUT, PATCH, DELETE methods with custom headers and body. Returns the response data, status, and headers.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            description: 'The full URL to call (must be http or https)'
+          },
+          method: {
+            type: 'string',
+            enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
+            description: 'HTTP method (default: GET)'
+          },
+          headers: {
+            type: 'object',
+            description: 'Custom headers to include in the request (e.g., {"Authorization": "Bearer token"})'
+          },
+          body: {
+            type: ['object', 'string', 'array'],
+            description: 'Request body for POST/PUT/PATCH. Objects are JSON-stringified automatically.'
+          },
+          timeout: {
+            type: 'number',
+            description: 'Request timeout in milliseconds (default: 30000)'
+          },
+          followRedirects: {
+            type: 'boolean',
+            description: 'Whether to follow redirects (default: true)'
+          },
+          validateStatus: {
+            type: 'boolean',
+            description: 'If false, resolve promise for any status code (default: true, throws on 4xx/5xx)'
+          }
+        },
+        required: ['url']
+      }
+    });
+
     this.capabilities = {
       tools: {
         listChanged: false
@@ -85,6 +125,9 @@ export class WebServer extends McpServer {
       case 'scrape_url':
         return await this.scrapeUrl(args, meta);
       
+      case 'api_call':
+        return await this.apiCall(args, meta);
+      
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -99,17 +142,13 @@ export class WebServer extends McpServer {
   ): Promise<CallToolResult> {
     const query = args.query as string;
     const count = Math.min((args.count as number) || 10, 10); // Google API limit is 10
+    const startTime = Date.now();
 
-    // Create event publisher (use publishRedis for events)
-    const publisher = new McpEventPublisher(this.publishRedis, 'web_search', 'Web Search', meta);
-
-    await publisher.publishStart({ input: { query, count } });
-    await publisher.publishLog('info', `🔍 Web search: "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}" (count=${count})`);
+    console.log(`[WebServer] 🔍 Web search: "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}" (count=${count})`);
 
     if (!this.googleApiKey || !this.googleSearchEngineId) {
       const error = 'Google API credentials not configured';
-      await publisher.publishError(error);
-      await publisher.publishLog('error', `✗ ${error}`);
+      console.error(`[WebServer] ✗ ${error}`);
       
       return {
         content: [{
@@ -121,8 +160,6 @@ export class WebServer extends McpServer {
     }
 
     try {
-      await publisher.publishProgress('Calling Google Custom Search API...', { progress: 30 });
-      
       const url = new URL('https://www.googleapis.com/customsearch/v1');
       url.searchParams.set('key', this.googleApiKey);
       url.searchParams.set('cx', this.googleSearchEngineId);
@@ -137,25 +174,19 @@ export class WebServer extends McpServer {
 
       if (!response.ok) {
         const error = `Google API error: ${response.status} ${response.statusText}`;
-        await publisher.publishError(error);
-        await publisher.publishLog('error', `✗ ${error}`, { duration: publisher.getDuration() });
+        console.error(`[WebServer] ✗ ${error}`);
         throw new Error(error);
       }
-
-      await publisher.publishProgress('Processing search results...', { progress: 60 });
 
       const data = await response.json() as any;
       
       // Format results from Google Custom Search
       const results = data.items || [];
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
       
-      await publisher.publishLog('info', `✓ Received ${results.length} results in ${duration}ms`);
+      console.log(`[WebServer] ✓ Received ${results.length} results in ${duration}ms`);
       
       if (results.length === 0) {
-        await publisher.publishComplete({ message: 'No results found' });
-        await publisher.publishLog('warn', '⚠️ No results found');
-        
         return {
           content: [{
             type: 'text',
@@ -173,18 +204,7 @@ export class WebServer extends McpServer {
         text += `${result.snippet || ''}\n\n`;
       }
 
-      await publisher.publishComplete({
-        resultCount: results.length,
-        resultLength: text.length
-      }, {
-        duration,
-        protocol: 'MCP'
-      });
-
-      await publisher.publishLog('success', `✓ Complete - ${results.length} results, ${text.length} chars`, {
-        duration,
-        resultCount: results.length
-      });
+      console.log(`[WebServer] ✓ Complete - ${results.length} results, ${text.length} chars`);
 
       return {
         content: [{
@@ -195,10 +215,7 @@ export class WebServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Web search failed: ${errorMessage}`, { duration });
+      console.error(`[WebServer] ✗ Web search failed: ${errorMessage}`);
       
       return {
         content: [{
@@ -218,17 +235,13 @@ export class WebServer extends McpServer {
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
     const url = args.url as string;
+    const startTime = Date.now();
 
-    // Create event publisher (use publishRedis for events)
-    const publisher = new McpEventPublisher(this.publishRedis, 'scrape_url', 'URL Scraper', meta);
-
-    await publisher.publishStart({ input: { url } });
-    await publisher.publishLog('info', `📄 Scraping URL: ${url}`);
+    console.log(`[WebServer] 📄 Scraping URL: ${url}`);
 
     if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
       const error = 'Invalid URL - must start with http:// or https://';
-      await publisher.publishError(error);
-      await publisher.publishLog('error', `✗ ${error}`);
+      console.error(`[WebServer] ✗ ${error}`);
       
       return {
         content: [{
@@ -240,17 +253,14 @@ export class WebServer extends McpServer {
     }
 
     try {
-      await publisher.publishProgress('Fetching page...', { progress: 30 });
-      
       // Use custom parser
       const parsed = await fetchAndParse(url);
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
 
-      await publisher.publishLog('info', `✓ Extracted ${parsed.contentLength} chars in ${duration}ms`);
+      console.log(`[WebServer] ✓ Extracted ${parsed.contentLength} chars in ${duration}ms`);
 
       if (!parsed.text || parsed.text.trim().length === 0) {
-        await publisher.publishComplete({ message: 'No content extracted' });
-        await publisher.publishLog('warn', '⚠️ No content extracted');
+        console.warn(`[WebServer] ⚠️ No content extracted from ${url}`);
         
         return {
           content: [{
@@ -260,8 +270,6 @@ export class WebServer extends McpServer {
         };
       }
 
-      await publisher.publishProgress('Processing content...', { progress: 70 });
-
       // Format result with title if available
       let result = '';
       if (parsed.title) {
@@ -269,19 +277,7 @@ export class WebServer extends McpServer {
       }
       result += `Source: ${url}\n\n${parsed.text}`;
 
-      await publisher.publishComplete({
-        contentLength: result.length,
-        title: parsed.title
-      }, {
-        duration,
-        protocol: 'Custom Parser'
-      });
-
-      await publisher.publishLog('success', `✓ Complete - ${result.length} chars`, {
-        duration,
-        contentLength: result.length,
-        title: parsed.title
-      });
+      console.log(`[WebServer] ✓ Complete - ${result.length} chars`);
 
       return {
         content: [{
@@ -292,15 +288,150 @@ export class WebServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const duration = publisher.getDuration();
-      
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Scraping failed: ${errorMessage}`, { duration });
+      console.error(`[WebServer] ✗ Scraping failed: ${errorMessage}`);
       
       return {
         content: [{
           type: 'text',
           text: `Failed to scrape ${url}: ${errorMessage}`
+        }],
+        isError: true
+      };
+    }
+  }
+
+  /**
+   * Make an HTTP API call
+   */
+  private async apiCall(
+    args: Record<string, unknown>,
+    meta?: { conversationId?: string; generationId?: string; messageId?: string }
+  ): Promise<CallToolResult> {
+    const url = args.url as string;
+    const method = ((args.method as string) || 'GET').toUpperCase();
+    const headers = (args.headers as Record<string, string>) || {};
+    const body = args.body;
+    const timeout = (args.timeout as number) || 30000;
+    const followRedirects = args.followRedirects !== false;
+    const validateStatus = args.validateStatus !== false;
+
+    // Validate URL
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        return {
+          content: [{ type: 'text', text: 'Error: URL must use http or https protocol' }],
+          isError: true
+        };
+      }
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Error: Invalid URL - ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true
+      };
+    }
+
+    console.log(`[WebServer] 🔗 API call: ${method} ${parsedUrl.hostname}${parsedUrl.pathname}`);
+
+    // Prepare request options
+    const fetchOptions: RequestInit = {
+      method,
+      headers: {
+        'User-Agent': 'RedAI-MCP/1.0',
+        ...headers
+      },
+      redirect: followRedirects ? 'follow' : 'manual'
+    };
+
+    // Add body for methods that support it
+    if (body && ['POST', 'PUT', 'PATCH'].includes(method)) {
+      if (typeof body === 'object') {
+        fetchOptions.body = JSON.stringify(body);
+        if (!headers['Content-Type'] && !headers['content-type']) {
+          (fetchOptions.headers as Record<string, string>)['Content-Type'] = 'application/json';
+        }
+      } else {
+        fetchOptions.body = String(body);
+      }
+    }
+
+    // Create abort controller for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    fetchOptions.signal = controller.signal;
+
+    try {
+      const startTime = Date.now();
+      const response = await fetch(url, fetchOptions);
+      const duration = Date.now() - startTime;
+
+      clearTimeout(timeoutId);
+
+      // Get response body
+      const contentType = response.headers.get('content-type') || '';
+      let responseBody: unknown;
+      
+      if (contentType.includes('application/json')) {
+        try {
+          responseBody = await response.json();
+        } catch {
+          responseBody = await response.text();
+        }
+      } else {
+        responseBody = await response.text();
+      }
+
+      console.log(`[WebServer] ✓ API call complete: ${response.status} (${duration}ms)`);
+
+      // Check status if validation is enabled
+      if (validateStatus && !response.ok) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: true,
+              status: response.status,
+              statusText: response.statusText,
+              headers: Object.fromEntries(response.headers.entries()),
+              body: responseBody,
+              duration
+            }, null, 2)
+          }],
+          isError: true
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            status: response.status,
+            statusText: response.statusText,
+            headers: Object.fromEntries(response.headers.entries()),
+            body: responseBody,
+            duration
+          }, null, 2)
+        }]
+      };
+
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      console.error(`[WebServer] ✗ API call failed:`, error);
+      
+      if (error instanceof Error && error.name === 'AbortError') {
+        return {
+          content: [{ type: 'text', text: `Error: Request timeout after ${timeout}ms` }],
+          isError: true
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`
         }],
         isError: true
       };

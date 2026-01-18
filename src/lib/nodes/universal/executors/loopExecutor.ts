@@ -13,6 +13,9 @@
 import type { LoopStepConfig } from '../types';
 import { executeStep } from '../stepExecutor';
 
+// Debug logging - set to true to enable verbose logs
+const DEBUG = false;
+
 /**
  * Convert flat dot-notation object to nested object
  * Example: { 'data.executionPlan': {...}, 'data.hasPlan': true } 
@@ -67,6 +70,30 @@ function deepMergeInPlace(target: any, source: any): void {
 }
 
 /**
+ * Resolve a config value that might be a template string like "{{parameters.maxIterations}}"
+ * Returns the resolved value or the original value
+ */
+function resolveConfigValue(value: any, state: any): any {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  
+  // Check if it's a simple parameter template like "{{parameters.maxIterations}}"
+  const paramMatch = value.match(/^\{\{parameters\.(\w+)\}\}$/);
+  if (paramMatch && state.parameters) {
+    const paramName = paramMatch[1];
+    const resolved = state.parameters[paramName];
+    if (resolved !== undefined) {
+      if (DEBUG) console.log(`[LoopExecutor] Resolved parameter ${paramName}:`, resolved);
+      return resolved;
+    }
+  }
+  
+  // Not a template or couldn't resolve - return as-is
+  return value;
+}
+
+/**
  * Execute a loop step - runs nested steps repeatedly until exit condition met
  * 
  * @param config - Loop configuration with maxIterations, exitCondition, steps, etc.
@@ -78,16 +105,19 @@ export async function executeLoop(
   state: any
 ): Promise<Partial<any>> {
   const {
-    maxIterations,
     exitCondition,
     accumulatorField,
     steps,
     onMaxIterations = 'continue'
   } = config;
   
-  console.log(`[LoopExecutor] Starting loop (max: ${maxIterations} iterations)`);
-  console.log(`[LoopExecutor] Exit condition: ${exitCondition}`);
-  console.log(`[LoopExecutor] Steps per iteration: ${steps.length}`);
+  // Resolve maxIterations - might be a template like "{{parameters.maxIterations}}"
+  const resolvedMaxIterations = resolveConfigValue(config.maxIterations, state);
+  const maxIterations = typeof resolvedMaxIterations === 'number' ? resolvedMaxIterations : 5;
+  
+  if (DEBUG) {
+    console.log(`[LoopExecutor] Starting loop (max: ${maxIterations}, steps: ${steps?.length || 0})`);
+  }
   
   // Validate loop has steps
   if (!steps || steps.length === 0) {
@@ -104,20 +134,15 @@ export async function executeLoop(
   // Clone current state to avoid mutating during loop
   const loopState = { ...state };
   
-  console.log('[LoopExecutor] Initial loop state keys:', Object.keys(loopState).filter(k => !k.startsWith('_') && !['mcpClient', 'logger', 'neuronRegistry'].includes(k)).join(', '));
-  console.log('[LoopExecutor] executorAwaitingReturn in initial state:', 'executorAwaitingReturn' in loopState, loopState.executorAwaitingReturn);
-  
   while (iteration < maxIterations && !exitConditionMet) {
     iteration++;
     
-    console.log(`[LoopExecutor] --- Iteration ${iteration}/${maxIterations} ---`);
+    if (DEBUG) console.log(`[LoopExecutor] --- Iteration ${iteration}/${maxIterations} ---`);
     
     // Execute all steps in this iteration
     for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
       const step = steps[stepIndex];
       const stepNumber = stepIndex + 1;
-      
-      console.log(`[LoopExecutor] Iteration ${iteration}, Step ${stepNumber}/${steps.length}: ${step.type}`);
       
       try {
         // Create iteration state with current loop data and metadata
@@ -138,10 +163,12 @@ export async function executeLoop(
         const nestedUpdate = convertFlatToNested(stepUpdate);
         deepMergeInPlace(loopState, nestedUpdate);
         
-        console.log(
-          `[LoopExecutor] Iteration ${iteration}, Step ${stepNumber} completed.`,
-          `Updated:`, Object.keys(stepUpdate).join(', ')
-        );
+        if (DEBUG) {
+          console.log(
+            `[LoopExecutor] Iteration ${iteration}, Step ${stepNumber} completed.`,
+            `Updated:`, Object.keys(stepUpdate).join(', ')
+          );
+        }
         
       } catch (error: any) {
         console.error(
@@ -157,17 +184,6 @@ export async function executeLoop(
     // Accumulate iteration result if field specified
     if (accumulatorField && loopState[accumulatorField] !== undefined) {
       accumulatorArray.push(loopState[accumulatorField]);
-      // Safe stringify for logging (handle circular references)
-      let valuePreview = '[complex object]';
-      try {
-        valuePreview = JSON.stringify(loopState[accumulatorField]).substring(0, 100);
-      } catch {
-        valuePreview = '[non-serializable object]';
-      }
-      console.log(
-        `[LoopExecutor] Accumulated result from iteration ${iteration}:`,
-        `${accumulatorField}=${valuePreview}...`
-      );
     }
     
     // Evaluate exit condition
@@ -182,9 +198,7 @@ export async function executeLoop(
       });
       
       if (exitConditionMet) {
-        console.log(
-          `[LoopExecutor] Exit condition met after ${iteration} iteration(s)`
-        );
+        if (DEBUG) console.log(`[LoopExecutor] Exit condition met after ${iteration} iteration(s)`);
       }
     } catch (error: any) {
       console.warn(
@@ -209,9 +223,9 @@ export async function executeLoop(
     // onMaxIterations === 'continue' - proceed with current state
   }
   
-  console.log(
-    `[LoopExecutor] Loop complete. Iterations: ${iteration}, Exit condition met: ${exitConditionMet}`
-  );
+  if (DEBUG) {
+    console.log(`[LoopExecutor] Loop complete. Iterations: ${iteration}, Exit condition met: ${exitConditionMet}`);
+  }
   
   // Build result object - ONLY include data fields that changed during loop
   // Do NOT spread entire loopState (contains infrastructure like mcpClient, logger, etc.)
@@ -243,21 +257,13 @@ export async function executeLoop(
     }
   }
   
-  console.log('[LoopExecutor] Returning fields:', Object.keys(result).join(', '));
-  console.log('[LoopExecutor] executionPlan in result:', 'executionPlan' in result);
-  console.log('[LoopExecutor] executionPlan VALUE:', result.executionPlan);
-  console.log('[LoopExecutor] currentStepIndex in result:', 'currentStepIndex' in result);
-  console.log('[LoopExecutor] currentStepIndex VALUE:', result.currentStepIndex);
+  if (DEBUG) console.log('[LoopExecutor] Returning fields:', Object.keys(result).join(', '));
   
   // Add accumulator array if used
   if (accumulatorField) {
     const accumulatorArrayField = `${accumulatorField}Array`;
     result[accumulatorArrayField] = accumulatorArray;
     result[`${accumulatorField}Count`] = accumulatorArray.length;
-    
-    console.log(
-      `[LoopExecutor] Accumulated ${accumulatorArray.length} result(s) in ${accumulatorArrayField}`
-    );
   }
   
   return result;

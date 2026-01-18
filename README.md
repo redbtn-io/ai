@@ -6,8 +6,8 @@
 
 > A dynamic, graph-based AI agent library built on LangChain and LangGraph with MCP (Model Context Protocol) integration, per-user model configuration, and tier-based access control. Provides intelligent routing, persistent memory, and unified streaming/non-streaming interfaces.
 
-**Version**: 2.0  
-**Last Updated**: January 2025  
+**Version**: 2.1  
+**Last Updated**: December 2025  
 **Build Status**: ✅ Compiles successfully
 
 ---
@@ -380,6 +380,13 @@ interface RedConfig {
 
 Graphs define the AI workflow. They are stored in MongoDB and compiled to LangGraph StateGraph instances at runtime (JIT compilation).
 
+### Graph Types
+
+Graphs can be one of two types:
+
+- **`agent`** - Interactive chat graphs that require user input. Used in the chat interface for conversational AI.
+- **`workflow`** - Headless graphs designed for automations. They run without user input and can be scheduled or triggered via webhooks.
+
 ### Graph Configuration Schema
 
 ```typescript
@@ -387,6 +394,7 @@ interface GraphConfig {
   graphId: string;         // Unique identifier (e.g., "red-assistant")
   userId: string;          // Owner ("system" for defaults, user ID for custom)
   isDefault: boolean;      // System default graph
+  graphType: 'agent' | 'workflow';  // Graph type (default: 'agent')
   name: string;            // Display name
   description?: string;    // User-facing description
   tier: number;            // Minimum account level (0=admin, 4=free)

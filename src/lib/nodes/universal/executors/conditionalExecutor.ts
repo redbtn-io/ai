@@ -8,6 +8,9 @@
 import type { ConditionalStepConfig } from '../types';
 import { renderTemplate } from '../templateRenderer';
 
+// Debug logging - set to true to enable verbose logs
+const DEBUG = false;
+
 /**
  * Execute a conditional step
  * 
@@ -40,12 +43,9 @@ export function executeConditional(
     const trimmedCondition = config.condition.trim();
     
     // DEBUG: Log what we're checking
-    console.log('[ConditionalExecutor] Checking condition:', {
+    if (DEBUG) console.log('[ConditionalExecutor] Checking condition:', {
       original: config.condition,
-      trimmed: trimmedCondition,
-      startsWithBraces: trimmedCondition.startsWith('{{'),
-      endsWithBraces: trimmedCondition.endsWith('}}'),
-      willEvalAsJS: trimmedCondition.startsWith('{{') && trimmedCondition.endsWith('}}')
+      trimmed: trimmedCondition
     });
     
     if (trimmedCondition.startsWith('{{') && trimmedCondition.endsWith('}}')) {
@@ -53,25 +53,68 @@ export function executeConditional(
       const expression = trimmedCondition.slice(2, -2).trim();
       try {
         // Special logging for executionPlan validation
-        if (expression.includes('executionPlan')) {
+        if (DEBUG && expression.includes('executionPlan')) {
           console.log('[ConditionalExecutor] DEBUG - Validating executionPlan:', {
             expression,
-            executionPlan: state.data?.executionPlan,
             hasSteps: !!state.data?.executionPlan?.steps,
-            stepsType: typeof state.data?.executionPlan?.steps,
-            stepsLength: state.data?.executionPlan?.steps?.length,
-            stepsValue: state.data?.executionPlan?.steps
+            stepsLength: state.data?.executionPlan?.steps?.length
           });
         }
         
-        const evalFunc = new Function('state', `return ${expression}`);
-        result = Boolean(evalFunc(state));
-        conditionStr = trimmedCondition; // Keep original for logging
+        // For simple existence checks, avoid passing the entire state to prevent stack overflow
+        // Patterns we want to match:
+        // - state.data.field !== undefined
+        // - state.data.field !== undefined && state.data.field !== null
+        // - state.data.field !== null
+        const existencePatterns = [
+          // state.data.field !== undefined && state.data.field !== null
+          /^(state(?:\.\w+)+)\s*!==\s*undefined\s*&&\s*\1\s*!==\s*null$/,
+          // state.data.field !== null && state.data.field !== undefined  
+          /^(state(?:\.\w+)+)\s*!==\s*null\s*&&\s*\1\s*!==\s*undefined$/,
+          // state.data.field !== undefined
+          /^(state(?:\.\w+)+)\s*!==\s*undefined$/,
+          // state.data.field !== null
+          /^(state(?:\.\w+)+)\s*!==\s*null$/,
+        ];
         
-        console.log('[ConditionalExecutor] Evaluated JS condition:', {
+        let matchedPath: string | null = null;
+        for (const pattern of existencePatterns) {
+          const match = expression.match(pattern);
+          if (match) {
+            matchedPath = match[1]; // e.g., "state.data.contextMessages"
+            break;
+          }
+        }
+        
+        if (matchedPath) {
+          // Extract path after "state."
+          const path = matchedPath.substring(6); // Remove "state."
+          const parts = path.split('.');
+          let value: any = state;
+          for (const part of parts) {
+            value = value?.[part];
+          }
+          result = value !== undefined && value !== null;
+          conditionStr = trimmedCondition;
+          if (DEBUG) console.log('[ConditionalExecutor] Fast existence check:', { path: matchedPath, result });
+        } else {
+          // Create a minimal state object for evaluation to avoid stack overflow
+          // when state contains large objects or circular references
+          const evalFunc = new Function('state', `
+            try {
+              return ${expression};
+            } catch (innerError) {
+              // Handle evaluation errors gracefully
+              return false;
+            }
+          `);
+          result = Boolean(evalFunc(state));
+          conditionStr = trimmedCondition; // Keep original for logging
+        }
+        
+        if (DEBUG) console.log('[ConditionalExecutor] Evaluated JS condition:', {
           expression,
-          result,
-          type: typeof result
+          result
         });
       } catch (error) {
         console.error('[ConditionalExecutor] Failed to evaluate JS condition:', expression, error);
@@ -97,7 +140,7 @@ export function executeConditional(
       : config.falseValue;
     
     // Debug logging
-    console.log(`[ConditionalExecutor] Condition: "${config.condition}" → rendered: "${conditionStr}" → result: ${result} → setting ${config.setField} = ${result ? trueValue : falseValue}`);
+    if (DEBUG) console.log(`[ConditionalExecutor] Condition result: ${result} → setting ${config.setField}`);
     
     // Return appropriate value
     return {
@@ -131,10 +174,9 @@ function evaluateValue(valueStr: string, state: any): any {
       const evalFunc = new Function('state', `return ${expression}`);
       const result = evalFunc(state);
       
-      console.log('[ConditionalExecutor] Evaluated JS expression:', {
+      if (DEBUG) console.log('[ConditionalExecutor] Evaluated JS expression:', {
         expression,
-        result,
-        type: typeof result
+        resultType: typeof result
       });
       
       return result;
@@ -182,14 +224,23 @@ function evaluateCondition(conditionStr: string): boolean {
   if (trimmed === 'true') return true;
   if (trimmed === 'false') return false;
   
-  // Handle logical OR (||)
-  if (trimmed.includes(' || ')) {
+  // Safety: If the condition string is very long (likely contains serialized data),
+  // skip recursive parsing which could cause stack overflow
+  if (trimmed.length > 10000) {
+    // For very long strings, just check for truthiness
+    // Non-empty, non-null, non-undefined means truthy
+    return trimmed !== 'null' && trimmed !== 'undefined' && trimmed !== '0';
+  }
+  
+  // Handle logical OR (||) - but only if it looks like a logical expression
+  // and not embedded in a JSON string (check for balanced quotes)
+  if (trimmed.includes(' || ') && !looksLikeJson(trimmed)) {
     const parts = trimmed.split(' || ');
     return parts.some(part => evaluateCondition(part.trim()));
   }
   
-  // Handle logical AND (&&)
-  if (trimmed.includes(' && ')) {
+  // Handle logical AND (&&) - same safety check
+  if (trimmed.includes(' && ') && !looksLikeJson(trimmed)) {
     const parts = trimmed.split(' && ');
     return parts.every(part => evaluateCondition(part.trim()));
   }
@@ -229,4 +280,14 @@ function evaluateCondition(conditionStr: string): boolean {
   
   // Existence check: non-empty string is truthy
   return trimmed.length > 0 && trimmed !== '0' && trimmed !== 'null' && trimmed !== 'undefined';
+}
+
+/**
+ * Check if a string looks like JSON (starts with [ or {)
+ * Used to avoid splitting JSON content on logical operators
+ */
+function looksLikeJson(str: string): boolean {
+  const trimmed = str.trim();
+  return (trimmed.startsWith('[') && trimmed.endsWith(']')) || 
+         (trimmed.startsWith('{') && trimmed.endsWith('}'));
 }

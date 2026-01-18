@@ -26,6 +26,40 @@ import {
   parametersMapToObject,
   type NodeParameters 
 } from '../../models/Node';
+import type { RunPublisher } from '../../run';
+
+// Debug logging - set to true to enable verbose logs
+const DEBUG = false;
+
+/**
+ * Unified interface for node event publishing
+ */
+interface NodeEventPublisher {
+  nodeStart(nodeId: string, nodeType: string, nodeName: string): Promise<void>;
+  nodeProgress(nodeId: string, step: string, options?: { index?: number; total?: number; data?: Record<string, unknown> }): Promise<void>;
+  nodeComplete(nodeId: string, nextNodeId?: string, output?: Record<string, unknown>): Promise<void>;
+  nodeError(nodeId: string, error: string): Promise<void>;
+}
+
+/**
+ * Create an event publisher from RunPublisher
+ * Returns null if no RunPublisher is available (events will be skipped)
+ */
+function createNodeEventPublisher(state: any): NodeEventPublisher | null {
+  // Use RunPublisher from run
+  if (state.runPublisher) {
+    const runPublisher = state.runPublisher as RunPublisher;
+    return {
+      nodeStart: (nodeId, nodeType, nodeName) => runPublisher.nodeStart(nodeId, nodeType, nodeName),
+      nodeProgress: (nodeId, step, options) => runPublisher.nodeProgress(nodeId, step, options),
+      nodeComplete: (nodeId, nextNodeId, output) => runPublisher.nodeComplete(nodeId, nextNodeId, output),
+      nodeError: (nodeId, error) => runPublisher.nodeError(nodeId, error),
+    };
+  }
+
+  // No publisher available - events will be skipped
+  return null;
+}
 
 /**
  * Universal node function compatible with NODE_REGISTRY
@@ -52,30 +86,14 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
   // Extract graph-level parameter overrides (passed from graph node config)
   const graphParameters: ResolvedParameters = (nodeConfig as any).parameters || {};
   
+  // graphNodeId is the unique node instance ID in the graph (used for event publishing)
+  // nodeId is the registry lookup key (can be node type like "context" or explicit custom node ID)
+  const graphNodeId: string = (nodeConfig as any).graphNodeId || (nodeConfig as any).nodeId || 'universal';
+  let nodeId: string = (nodeConfig as any).nodeId || 'universal';
+  
   // Check if this is a nodeId reference (registry mode)
   if ((nodeConfig as any).nodeId && !(nodeConfig as any).steps) {
-    const nodeId = (nodeConfig as any).nodeId;
-    console.log(`[UniversalNode] Loading config from registry: ${nodeId}`);
-    
-    // Debug logging for executor to trace state persistence
-    if (nodeId === 'executor') {
-      console.log('[UniversalNode - EXECUTOR] Incoming state.data keys:', Object.keys(state.data || {}));
-      console.log('[UniversalNode - EXECUTOR] executorAwaitingReturn:', state.data?.executorAwaitingReturn);
-      console.log('[UniversalNode - EXECUTOR] currentStepIndex:', state.data?.currentStepIndex);
-    }
-    
-    // Debug logging for respond node to trace context
-    if (nodeId === 'respond') {
-      console.log('[UniversalNode - RESPOND] ===== INCOMING STATE =====');
-      console.log('[UniversalNode - RESPOND] contextMessages count:', state.contextMessages?.length || 0);
-      if (state.contextMessages && state.contextMessages.length > 0) {
-        console.log('[UniversalNode - RESPOND] Context messages:');
-        state.contextMessages.forEach((msg: any, i: number) => {
-          console.log(`[UniversalNode - RESPOND]   [${i}] ${msg.role}: ${msg.content?.substring(0, 80)}...`);
-        });
-      }
-      console.log('[UniversalNode - RESPOND] messages count:', state.messages?.length || 0);
-    }
+    if (DEBUG) console.log(`[UniversalNode] Loading config from registry: ${nodeId}`);
     
     // Import registry dynamically to avoid circular dependencies
     const { getUniversalNode, getUniversalNodeRaw } = await import('../../registry/UniversalNodeRegistry');
@@ -103,7 +121,7 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
       // Resolve parameters (merge defaults with graph overrides)
       const resolvedParams = resolveParameters(parameterDefs, graphParameters);
       
-      console.log(`[UniversalNode] Resolved parameters for ${nodeId}:`, resolvedParams);
+      if (DEBUG) console.log(`[UniversalNode] Resolved parameters for ${nodeId}:`, resolvedParams);
       
       // Attach resolved parameters to config for use in templates
       loadedConfig.resolvedParameters = resolvedParams;
@@ -111,7 +129,7 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
     
     // Use the loaded config directly (registry already formats it correctly)
     nodeConfig = loadedConfig;
-    console.log(`[UniversalNode] Loaded config for ${nodeId} (${nodeConfig.steps?.length || 0} steps)`);
+    if (DEBUG) console.log(`[UniversalNode] Loaded config for ${nodeId} (${nodeConfig.steps?.length || 0} steps)`);
   }
 
   // Generate system prefix for this node execution
@@ -127,7 +145,20 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
     state.parameters = nodeConfig.resolvedParameters;
   }
   
-  console.log(`[UniversalNode] Executing node ${currentNodeCount}: ${nodeName}`);
+  if (DEBUG) console.log(`[UniversalNode] Executing node ${currentNodeCount}: ${nodeName}`);
+  
+  // Create unified event publisher (prefers RunPublisher, falls back to GraphEventPublisher)
+  const eventPublisher = createNodeEventPublisher(state);
+  
+  // No need to log publisher status - it's normal to have or not have one
+  
+  // Publish node start event
+  if (eventPublisher) {
+    const nodeType = (nodeConfig as any).type || 'universal';
+    await eventPublisher.nodeStart(graphNodeId, nodeType, nodeName);
+  }
+  
+  const nodeStartTime = Date.now();
   
   // Validate configuration
   if (!nodeConfig.steps && (!nodeConfig.type || !nodeConfig.config)) {
@@ -166,6 +197,16 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
       `[UniversalNode] Executing step ${stepNumber}/${steps.length}: ${step.type}`
     );
     
+    // Publish step progress event
+    if (eventPublisher) {
+      const stepName = (step as any).name || step.type;
+      await eventPublisher.nodeProgress(graphNodeId, stepName, {
+        index: i,
+        total: steps.length,
+        data: { stepType: step.type }
+      });
+    }
+    
     try {
       // Set current step index in state
       // This allows respond.ts to know which step is currently executing
@@ -189,36 +230,46 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
       state._currentStepIndex = undefined;
       
       const updatedFields = Object.keys(stepUpdate);
-      console.log(
-        `[UniversalNode] Step ${stepNumber} completed. Updated fields:`,
-        updatedFields.join(', ')
-      );
+      if (DEBUG) {
+        console.log(
+          `[UniversalNode] Step ${stepNumber} completed. Updated fields:`,
+          updatedFields.join(', ')
+        );
+      }
       
       // Log the actual values for debugging routing issues
       for (const field of updatedFields) {
         const value = stepUpdate[field];
-        let valuePreview: string;
-        
-        if (value === undefined) {
-          valuePreview = 'undefined';
-        } else if (value === null) {
-          valuePreview = 'null';
-        } else if (typeof value === 'string') {
-          valuePreview = value.length > 100 ? value.substring(0, 100) + '...' : value;
-        } else {
-          const stringified = JSON.stringify(value);
-          valuePreview = stringified.length > 100 
-            ? stringified.substring(0, 100) + '...'
-            : stringified;
+        if (DEBUG) {
+          let valuePreview: string;
+          
+          if (value === undefined) {
+            valuePreview = 'undefined';
+          } else if (value === null) {
+            valuePreview = 'null';
+          } else if (typeof value === 'string') {
+            valuePreview = value.length > 100 ? value.substring(0, 100) + '...' : value;
+          } else {
+            const stringified = JSON.stringify(value);
+            valuePreview = stringified.length > 100 
+              ? stringified.substring(0, 100) + '...'
+              : stringified;
+          }
+          
+          console.log(`[UniversalNode]   ${field} = ${valuePreview}`);
         }
-        
-        console.log(`[UniversalNode]   ${field} = ${valuePreview}`);
       }
       
     } catch (error: any) {
       // Provide detailed error context
       const errorMessage = `Step ${stepNumber} (${step.type}) failed: ${error.message}`;
       console.error(`[UniversalNode] ${errorMessage}`);
+      
+      // Publish node error event
+      if (eventPublisher) {
+        // Note: willRetry context is handled by graph compiler routing to error_handler
+        await eventPublisher.nodeError(graphNodeId, errorMessage);
+      }
       
       // Safe stringify for step config (avoid circular references)
       try {
@@ -229,7 +280,7 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
       
       // Return error state to trigger fallback
       // This allows the graph compiler to route to the error_handler node
-      console.log(`[UniversalNode] Triggering error fallback to 'error_handler'`);
+      if (DEBUG) console.log(`[UniversalNode] Triggering error fallback to 'error_handler'`);
       
       // Convert flat updates to nested before returning
       const nestedUpdates = convertFlatToNested(stateUpdates);
@@ -245,14 +296,32 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
     }
   }
   
-  console.log(
-    `[UniversalNode] All ${steps.length} step(s) completed successfully.`,
-    `Total fields updated:`, Object.keys(stateUpdates).join(', ')
-  );
+  // Publish node complete event
+  if (eventPublisher) {
+    // Try to determine next node from routing decision
+    const nextNodeId = stateUpdates['data.routeDecision'] || stateUpdates['data.nextGraph'];
+    await eventPublisher.nodeComplete(graphNodeId, nextNodeId);
+  }
+  
+  if (DEBUG) {
+    console.log(
+      `[UniversalNode] All ${steps.length} step(s) completed.`,
+      `Updated fields:`, Object.keys(stateUpdates).join(', ')
+    );
+  }
   
   // Convert flat dot-notation keys to nested objects
   // Example: { 'data.executionPlan': {...} } → { data: { executionPlan: {...} } }
   const nestedUpdates = convertFlatToNested(stateUpdates);
+  
+  // Debug: Log what we're returning, especially if it contains messages
+  if (stateUpdates['data.messages'] !== undefined || (nestedUpdates.data && 'messages' in nestedUpdates.data)) {
+    console.log('[UniversalNode] RETURNING WITH MESSAGES:', {
+      flatKey: 'data.messages' in stateUpdates,
+      nestedData: nestedUpdates.data ? Object.keys(nestedUpdates.data) : 'no data',
+      messagesLength: nestedUpdates.data?.messages?.length
+    });
+  }
   
   // Return accumulated state updates
   // LangGraph will merge these using field-specific reducers
@@ -296,17 +365,53 @@ function convertFlatToNested(flat: Record<string, any>): Record<string, any> {
 
 /**
  * Deep merge two objects, merging nested objects recursively
+ * Includes protection against circular references and deep nesting
  */
-function deepMergeObjects(target: any, source: any): any {
+function deepMergeObjects(target: any, source: any, depth = 0, seen = new WeakSet()): any {
+  // Protect against excessive depth (likely circular or very deep nesting)
+  if (depth > 20) {
+    if (DEBUG) console.warn('[deepMergeObjects] Max depth reached, returning target with source overlay');
+    // Still merge at top level, just don't go deeper
+    return { ...target, ...source };
+  }
+  
+  // If source is null/undefined, return target
+  if (source === null || source === undefined) {
+    return target;
+  }
+  
+  // If target is not an object, just return source
+  if (!target || typeof target !== 'object') {
+    return source;
+  }
+  
+  // If source is not an object, return source (overwrites target)
+  if (typeof source !== 'object') {
+    return source;
+  }
+  
+  // Protect against circular references in source
+  if (seen.has(source)) {
+    // For circular refs, merge what we can at this level without recursing
+    return { ...target, ...source };
+  }
+  
+  // Track source object to detect circular references
+  seen.add(source);
+  
+  // Start with all keys from target
   const result = { ...target };
   
   for (const key of Object.keys(source)) {
-    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+    const sourceValue = source[key];
+    const targetValue = result[key];
+    
+    if (sourceValue && typeof sourceValue === 'object' && !Array.isArray(sourceValue)) {
       // Recursively merge nested objects
-      result[key] = deepMergeObjects(result[key] || {}, source[key]);
+      result[key] = deepMergeObjects(targetValue || {}, sourceValue, depth + 1, seen);
     } else {
       // Directly assign primitives, arrays, and null values
-      result[key] = source[key];
+      result[key] = sourceValue;
     }
   }
   

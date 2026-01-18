@@ -6,7 +6,6 @@
 import { Redis } from 'ioredis';
 import { McpServer } from '../server';
 import { CallToolResult } from '../types';
-import { McpEventPublisher } from '../event-publisher';
 import { VectorStoreManager, ChunkingConfig, SearchConfig } from '../../memory/vectors';
 
 export class RagServer extends McpServer {
@@ -202,6 +201,7 @@ export class RagServer extends McpServer {
     args: Record<string, unknown>,
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
+    const startTime = Date.now();
     const text = args.text as string;
     const collection = (args.collection as string) || 'general';
     const source = (args.source as string) || 'unknown';
@@ -209,16 +209,11 @@ export class RagServer extends McpServer {
     const chunkSize = (args.chunkSize as number) || 2000;
     const chunkOverlap = (args.chunkOverlap as number) || 200;
 
-    // Create event publisher
-    const publisher = new McpEventPublisher(this.publishRedis, 'rag_add', 'RAG Add Document', meta);
-
-    await publisher.publishStart({ input: { textLength: text.length, collection, source } });
-    await publisher.publishLog('info', `📚 Adding document to collection: ${collection}`);
+    console.log(`📚 Adding document to collection: ${collection}`);
 
     if (!text || text.trim().length === 0) {
       const error = 'No text provided';
-      await publisher.publishError(error);
-      await publisher.publishLog('error', `✗ ${error}`);
+      console.error(`✗ ${error}`);
       
       return {
         content: [{
@@ -231,7 +226,6 @@ export class RagServer extends McpServer {
 
     try {
       // Health check
-      await publisher.publishProgress('Checking vector database connection...', { progress: 10 });
       const isHealthy = await this.vectorStore.healthCheck();
       
       if (!isHealthy) {
@@ -239,7 +233,6 @@ export class RagServer extends McpServer {
       }
 
       // Prepare metadata
-      await publisher.publishProgress('Preparing document metadata...', { progress: 20 });
       const fullMetadata = {
         ...metadata,
         source,
@@ -256,7 +249,6 @@ export class RagServer extends McpServer {
       };
 
       // Add document (this will automatically chunk and embed)
-      await publisher.publishProgress('Chunking and embedding document...', { progress: 40 });
       const chunksAdded = await this.vectorStore.addDocument(
         collection,
         text,
@@ -264,14 +256,9 @@ export class RagServer extends McpServer {
         chunkingConfig
       );
 
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
 
-      await publisher.publishLog('success', `✓ Document added: ${chunksAdded} chunks in ${duration}ms`);
-      await publisher.publishComplete({
-        chunksAdded,
-        collection,
-        duration
-      });
+      console.log(`✓ Document added: ${chunksAdded} chunks in ${duration}ms`);
 
       const result = `Successfully added document to collection "${collection}".\n\n` +
                     `- Text length: ${text.length} characters\n` +
@@ -288,10 +275,9 @@ export class RagServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
       
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to add document: ${errorMessage}`, { duration });
+      console.error(`✗ Failed to add document: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -310,6 +296,7 @@ export class RagServer extends McpServer {
     args: Record<string, unknown>,
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
+    const startTime = Date.now();
     const query = args.query as string;
     const collection = (args.collection as string) || 'general';
     const topK = (args.topK as number) || 5;
@@ -317,16 +304,11 @@ export class RagServer extends McpServer {
     const filter = args.filter as Record<string, any> | undefined;
     const mergeChunks = args.mergeChunks !== false; // Default: true
 
-    // Create event publisher
-    const publisher = new McpEventPublisher(this.publishRedis, 'rag_search', 'RAG Search', meta);
-
-    await publisher.publishStart({ input: { query: query.substring(0, 100), collection } });
-    await publisher.publishLog('info', `🔍 Searching collection: ${collection}`);
+    console.log(`🔍 Searching collection: ${collection}`);
 
     if (!query || query.trim().length === 0) {
       const error = 'No query provided';
-      await publisher.publishError(error);
-      await publisher.publishLog('error', `✗ ${error}`);
+      console.error(`✗ ${error}`);
       
       return {
         content: [{
@@ -339,7 +321,6 @@ export class RagServer extends McpServer {
 
     try {
       // Health check
-      await publisher.publishProgress('Checking vector database connection...', { progress: 10 });
       const isHealthy = await this.vectorStore.healthCheck();
       
       if (!isHealthy) {
@@ -347,7 +328,6 @@ export class RagServer extends McpServer {
       }
 
       // Prepare search config
-      await publisher.publishProgress('Generating query embedding...', { progress: 30 });
       const searchConfig: SearchConfig = {
         topK,
         threshold,
@@ -355,7 +335,6 @@ export class RagServer extends McpServer {
       };
 
       // Perform search
-      await publisher.publishProgress('Searching for relevant documents...', { progress: 60 });
       const results = await this.vectorStore.search(
         collection,
         query,
@@ -365,17 +344,12 @@ export class RagServer extends McpServer {
       // Merge chunks if requested
       let processedResults = results;
       if (mergeChunks && results.length > 0) {
-        await publisher.publishProgress('Merging overlapping chunks...', { progress: 80 });
         processedResults = this.groupAndMergeResults(results);
       }
 
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
 
-      await publisher.publishLog('success', `✓ Search complete: ${processedResults.length} results in ${duration}ms`);
-      await publisher.publishComplete({
-        resultsCount: processedResults.length,
-        duration
-      });
+      console.log(`✓ Search complete: ${processedResults.length} results in ${duration}ms`);
 
       // Format results
       if (processedResults.length === 0) {
@@ -413,10 +387,9 @@ export class RagServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
       
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Search failed: ${errorMessage}`, { duration });
+      console.error(`✗ Search failed: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -529,20 +502,16 @@ export class RagServer extends McpServer {
     args: Record<string, unknown>,
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
+    const startTime = Date.now();
     const collection = (args.collection as string) || 'general';
     const ids = args.ids as string[] | undefined;
     const filter = args.filter as Record<string, any> | undefined;
 
-    // Create event publisher
-    const publisher = new McpEventPublisher(this.publishRedis, 'rag_delete', 'RAG Delete', meta);
-
-    await publisher.publishStart({ input: { collection, idsCount: ids?.length } });
-    await publisher.publishLog('info', `🗑️ Deleting from collection: ${collection}`);
+    console.log(`🗑️ Deleting from collection: ${collection}`);
 
     if (!ids && !filter) {
       const error = 'Must provide either ids or filter for deletion';
-      await publisher.publishError(error);
-      await publisher.publishLog('error', `✗ ${error}`);
+      console.error(`✗ ${error}`);
       
       return {
         content: [{
@@ -555,7 +524,6 @@ export class RagServer extends McpServer {
 
     try {
       // Health check
-      await publisher.publishProgress('Checking vector database connection...', { progress: 10 });
       const isHealthy = await this.vectorStore.healthCheck();
       
       if (!isHealthy) {
@@ -565,17 +533,14 @@ export class RagServer extends McpServer {
       let deletedCount = 0;
 
       if (ids && ids.length > 0) {
-        await publisher.publishProgress(`Deleting ${ids.length} documents by ID...`, { progress: 50 });
         deletedCount = await this.vectorStore.deleteDocuments(collection, ids);
       } else if (filter) {
-        await publisher.publishProgress('Deleting documents by filter...', { progress: 50 });
         deletedCount = await this.vectorStore.deleteByFilter(collection, filter);
       }
 
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
 
-      await publisher.publishLog('success', `✓ Deletion complete in ${duration}ms`);
-      await publisher.publishComplete({ deletedCount, duration });
+      console.log(`✓ Deletion complete in ${duration}ms`);
 
       const result = `Successfully deleted documents from collection "${collection}".\n\n` +
                     `- Deleted count: ${deletedCount || 'unknown'}\n` +
@@ -591,10 +556,9 @@ export class RagServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
       
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Deletion failed: ${errorMessage}`, { duration });
+      console.error(`✗ Deletion failed: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -613,28 +577,23 @@ export class RagServer extends McpServer {
     args: Record<string, unknown>,
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
-    // Create event publisher
-    const publisher = new McpEventPublisher(this.publishRedis, 'rag_list', 'RAG List Collections', meta);
+    const startTime = Date.now();
 
-    await publisher.publishStart({});
-    await publisher.publishLog('info', '📋 Listing collections');
+    console.log('📋 Listing collections');
 
     try {
       // Health check
-      await publisher.publishProgress('Checking vector database connection...', { progress: 10 });
       const isHealthy = await this.vectorStore.healthCheck();
       
       if (!isHealthy) {
         throw new Error('ChromaDB is not accessible. Check connection.');
       }
 
-      await publisher.publishProgress('Fetching collections...', { progress: 50 });
       const collections = await this.vectorStore.listCollections();
 
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
 
-      await publisher.publishLog('success', `✓ Found ${collections.length} collections in ${duration}ms`);
-      await publisher.publishComplete({ collectionsCount: collections.length, duration });
+      console.log(`✓ Found ${collections.length} collections in ${duration}ms`);
 
       if (collections.length === 0) {
         return {
@@ -658,10 +617,9 @@ export class RagServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
       
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to list collections: ${errorMessage}`, { duration });
+      console.error(`✗ Failed to list collections: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{
@@ -680,30 +638,24 @@ export class RagServer extends McpServer {
     args: Record<string, unknown>,
     meta?: { conversationId?: string; generationId?: string; messageId?: string }
   ): Promise<CallToolResult> {
+    const startTime = Date.now();
     const collection = (args.collection as string) || 'general';
 
-    // Create event publisher
-    const publisher = new McpEventPublisher(this.publishRedis, 'rag_stats', 'RAG Collection Stats', meta);
-
-    await publisher.publishStart({ input: { collection } });
-    await publisher.publishLog('info', `📊 Getting stats for collection: ${collection}`);
+    console.log(`📊 Getting stats for collection: ${collection}`);
 
     try {
       // Health check
-      await publisher.publishProgress('Checking vector database connection...', { progress: 10 });
       const isHealthy = await this.vectorStore.healthCheck();
       
       if (!isHealthy) {
         throw new Error('ChromaDB is not accessible. Check connection.');
       }
 
-      await publisher.publishProgress('Fetching collection stats...', { progress: 50 });
       const stats = await this.vectorStore.getCollectionStats(collection);
 
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
 
-      await publisher.publishLog('success', `✓ Stats retrieved in ${duration}ms`);
-      await publisher.publishComplete({ stats, duration });
+      console.log(`✓ Stats retrieved in ${duration}ms`);
 
       const result = `# Collection Statistics: "${collection}"\n\n` +
                     `- Document count: ${stats.count}\n` +
@@ -718,10 +670,9 @@ export class RagServer extends McpServer {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const duration = publisher.getDuration();
+      const duration = Date.now() - startTime;
       
-      await publisher.publishError(errorMessage);
-      await publisher.publishLog('error', `✗ Failed to get stats: ${errorMessage}`, { duration });
+      console.error(`✗ Failed to get stats: ${errorMessage} (${duration}ms)`);
 
       return {
         content: [{

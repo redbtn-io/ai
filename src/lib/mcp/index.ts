@@ -14,7 +14,6 @@ export * from './servers/web';
 export * from './servers/system';
 export * from './servers/rag';
 export * from './servers/context';
-export * from './event-publisher';
 
 // Stdio transport exports
 export * from './server-stdio';

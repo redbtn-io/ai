@@ -165,9 +165,10 @@ const NodeSchema = new mongoose.Schema({
   },
   
   // Is this node public (visible to all users)?
+  // Default is true (public). Private nodes are a paid feature (PRO tier or better).
   isPublic: {
     type: Boolean,
-    default: false,
+    default: true,
     index: true
   },
   
@@ -562,7 +563,7 @@ export async function cloneNodeForUser(
     userId,
     isSystem: false,
     isImmutable: false,
-    isPublic: false,
+    isPublic: true, // Default to public (user can change if they have paid tier)
     parentNodeId: sourceNodeId,
     version: 1,
     stats: { usageCount: 0, forkCount: 0, lastUsedAt: null },

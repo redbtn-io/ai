@@ -3,11 +3,56 @@
  * 
  * Executes LLM calls with template rendering for prompts.
  * Supports custom neurons or default LLM with configurable parameters.
+ * 
+ * Parameter Override Flow:
+ * 1. Node definition has `parameters` map with defaults (e.g., temperature: 0.1)
+ * 2. Graph can override via `config.parameters: { temperature: 0.3 }`
+ * 3. Resolved parameters are injected into state as `state.parameters`
+ * 4. Step configs can use `"{{parameters.temperature}}"` to reference them
+ * 5. This executor resolves those templates to actual values before using them
  */
 
 import type { NeuronStepConfig } from '../types';
 import { renderTemplate, getNestedProperty } from '../templateRenderer';
 import { executeWithErrorHandling } from './errorHandler';
+
+// Debug logging - set to true to enable verbose logs
+const DEBUG = false;
+
+/**
+ * Resolve a config value that might be a template string like "{{parameters.temperature}}"
+ * Returns the resolved value (as number if it was a parameter reference) or the original value
+ */
+function resolveConfigValue(value: any, state: any): any {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  
+  // Check if it's a simple parameter template like "{{parameters.temperature}}"
+  const paramMatch = value.match(/^\{\{parameters\.(\w+)\}\}$/);
+  if (paramMatch && state.parameters) {
+    const paramName = paramMatch[1];
+    const resolved = state.parameters[paramName];
+    if (resolved !== undefined) {
+      if (DEBUG) console.log(`[NeuronExecutor] Resolved parameter ${paramName}:`, resolved);
+      return resolved;
+    }
+  }
+  
+  // Check if it's a state reference like "{{state.data.someValue}}"
+  const stateMatch = value.match(/^\{\{state\.(.+)\}\}$/);
+  if (stateMatch) {
+    const path = stateMatch[1];
+    const resolved = getNestedProperty(state, path);
+    if (resolved !== undefined) {
+      if (DEBUG) console.log(`[NeuronExecutor] Resolved state path ${path}:`, resolved);
+      return resolved;
+    }
+  }
+  
+  // Not a template or couldn't resolve - return as-is
+  return value;
+}
 
 /**
  * Execute a neuron step (with error handling wrapper)
@@ -65,27 +110,63 @@ async function executeNeuronInternal(
       throw new Error('No neuron available: config.neuronId not set and no default neuron in state');
     }
     
+    // Resolve any template values in config (e.g., "{{parameters.temperature}}" -> 0.3)
+    const resolvedTemperature = resolveConfigValue(config.temperature, state);
+    const resolvedMaxTokens = resolveConfigValue(config.maxTokens, state);
+    
+    // Build overrides object for model creation (only include resolved numeric values)
+    const modelOverrides: { temperature?: number; maxTokens?: number } = {};
+    if (typeof resolvedTemperature === 'number') {
+      modelOverrides.temperature = resolvedTemperature;
+    }
+    if (typeof resolvedMaxTokens === 'number') {
+      modelOverrides.maxTokens = resolvedMaxTokens;
+    }
+    
+    if (DEBUG && Object.keys(modelOverrides).length > 0) {
+      console.log('[NeuronExecutor] Applying model overrides:', modelOverrides);
+    }
+    
     // Get model instance from registry (returns LangChain BaseChatModel)
     // Support userId at root or in data
     const userId = state.userId || state.data?.userId;
-    let model = await neuronRegistry.getModel(neuronId, userId);
+    let model = await neuronRegistry.getModel(
+      neuronId, 
+      userId,
+      Object.keys(modelOverrides).length > 0 ? modelOverrides : undefined
+    );
     
     if (!model) {
       throw new Error(`Failed to get model for neuron: ${neuronId}`);
     }
     
+    // Check if this is an Ollama model for special handling
+    const isOllamaModel = model.constructor.name === 'ChatOllama';
+    
+    // For structured output, we need different handling based on provider
+    let useNativeFormat = false;
+    
     // Apply structured output if configured
     if (config.structuredOutput) {
-      console.log('[NeuronExecutor] Using structured output with schema', {
+      if (DEBUG) console.log('[NeuronExecutor] Using structured output with schema', {
         neuronId,
         outputField: config.outputField,
-        schemaKeys: Object.keys(config.structuredOutput.schema)
+        schemaKeys: Object.keys(config.structuredOutput.schema),
+        isOllamaModel
       });
       
-      model = model.withStructuredOutput({
-        schema: config.structuredOutput.schema,
-        method: config.structuredOutput.method || 'auto'
-      });
+      if (isOllamaModel) {
+        // For Ollama, we'll pass the format at invocation time instead of using withStructuredOutput
+        // This avoids the tool-binding issues with Ollama's JSON schema validation
+        useNativeFormat = true;
+        if (DEBUG) console.log('[NeuronExecutor] Will use Ollama native format at invocation');
+      } else {
+        // For other providers (OpenAI, Anthropic), use standard withStructuredOutput
+        model = model.withStructuredOutput(config.structuredOutput.schema, {
+          method: config.structuredOutput.method || 'jsonSchema',
+          name: config.structuredOutput.name || 'extract'
+        });
+      }
     }
     
     // Check if userPrompt is a reference to an existing messages array
@@ -98,6 +179,11 @@ async function executeNeuronInternal(
       // User prompt is a direct reference to a messages field (e.g., {{state.messages}})
       const fieldName = messagesFieldMatch[1];
       const messagesArray = getNestedProperty(state, fieldName);
+      
+      // Debug: log what we got
+      console.log('[NeuronExecutor] Looking for messages at field:', fieldName);
+      console.log('[NeuronExecutor] state.data keys:', state.data ? Object.keys(state.data) : 'no data');
+      console.log('[NeuronExecutor] messagesArray type:', typeof messagesArray, Array.isArray(messagesArray) ? 'is array' : 'not array');
       
       if (Array.isArray(messagesArray)) {
         messages = [...messagesArray]; // Clone array to avoid mutating state
@@ -118,27 +204,22 @@ async function executeNeuronInternal(
           if (messages.length > 0 && messages[0].role === 'system') {
             // Replace existing system message
             messages[0] = { role: 'system', content: systemPrompt };
-            console.log('[NeuronExecutor] Using pre-built messages with system message override', {
+            if (DEBUG) console.log('[NeuronExecutor] Using pre-built messages with system override', {
               fieldName,
-              messageCount: messages.length,
-              systemPromptPreview: systemPrompt.substring(0, 100),
-              outputField: config.outputField
+              messageCount: messages.length
             });
           } else {
             // Prepend system message
             messages.unshift({ role: 'system', content: systemPrompt });
-            console.log('[NeuronExecutor] Using pre-built messages with prepended system message', {
+            if (DEBUG) console.log('[NeuronExecutor] Using pre-built messages with prepended system', {
               fieldName,
-              messageCount: messages.length,
-              systemPromptPreview: systemPrompt.substring(0, 100),
-              outputField: config.outputField
+              messageCount: messages.length
             });
           }
         } else {
-          console.log('[NeuronExecutor] Using pre-built messages array from state', {
+          if (DEBUG) console.log('[NeuronExecutor] Using pre-built messages array', {
             fieldName,
-            messageCount: messages.length,
-            outputField: config.outputField
+            messageCount: messages.length
           });
         }
       } else {
@@ -159,10 +240,8 @@ async function executeNeuronInternal(
 
       const userPrompt = renderTemplate(config.userPrompt, state);
       
-      console.log('[NeuronExecutor] Building messages from templates', {
+      if (DEBUG) console.log('[NeuronExecutor] Building messages from templates', {
         neuronId: neuronId,
-        systemPrompt: systemPrompt?.substring(0, 100),
-        userPrompt: userPrompt.substring(0, 100),
         outputField: config.outputField
       });
       
@@ -185,15 +264,47 @@ async function executeNeuronInternal(
     let response: any;
     
     if (config.structuredOutput) {
-      // Invoke for structured output (returns parsed object directly)
-      response = await model.invoke(messages);
+      // Invoke for structured output
+      let rawResponse: any;
       
-      console.log('[NeuronExecutor] Structured output received', {
+      if (useNativeFormat) {
+        // For Ollama, pass the format option at invocation time
+        rawResponse = await model.invoke(messages, {
+          format: config.structuredOutput.schema
+        });
+      } else {
+        // For other providers using withStructuredOutput
+        rawResponse = await model.invoke(messages);
+      }
+      
+      // Handle different response formats based on provider
+      if (useNativeFormat) {
+        // Ollama with native format returns AIMessage with JSON string content
+        const content = typeof rawResponse.content === 'string' 
+          ? rawResponse.content 
+          : String(rawResponse.content);
+        
+        try {
+          response = JSON.parse(content);
+          if (DEBUG) console.log('[NeuronExecutor] Parsed Ollama native format response', {
+            outputField: config.outputField,
+            responseKeys: Object.keys(response)
+          });
+        } catch (parseError) {
+          console.error('[NeuronExecutor] Failed to parse JSON from Ollama response', {
+            content: content.substring(0, 200),
+            error: parseError instanceof Error ? parseError.message : String(parseError)
+          });
+          throw new Error(`Failed to parse structured output: ${content.substring(0, 100)}`);
+        }
+      } else {
+        // withStructuredOutput returns parsed object directly
+        response = rawResponse;
+      }
+      
+      if (DEBUG) console.log('[NeuronExecutor] Structured output received', {
         outputField: config.outputField,
-        responseType: typeof response,
-        responseKeys: typeof response === 'object' ? Object.keys(response) : 'N/A',
-        hasContent: !!response,
-        fullResponse: JSON.stringify(response, null, 2)
+        responseKeys: typeof response === 'object' ? Object.keys(response) : 'N/A'
       });
     } else {
       // Stream from LangChain model for standard text responses
@@ -220,14 +331,14 @@ async function executeNeuronInternal(
     if (config.structuredOutput) {
       console.log('[NeuronExecutor] Structured output response', {
         outputField: config.outputField,
-        responseType: typeof response,
-        responseSample: JSON.stringify(response).substring(0, 200)
+        responseKeys: typeof response === 'object' ? Object.keys(response) : 'N/A',
+        // Show full execution plan for planner debugging
+        response: config.outputField.includes('executionPlan') ? JSON.stringify(response, null, 2) : undefined
       });
-    } else {
+    } else if (DEBUG) {
       console.log('[NeuronExecutor] Neuron response received', {
         outputField: config.outputField,
-        responseLength: response.length,
-        responseSample: response.substring(0, 100)
+        responseLength: response.length
       });
     }
     

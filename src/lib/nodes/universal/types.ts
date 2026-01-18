@@ -14,7 +14,7 @@
 /**
  * Step types available in universal nodes
  */
-export type StepType = 'neuron' | 'tool' | 'transform' | 'conditional' | 'loop';
+export type StepType = 'neuron' | 'tool' | 'transform' | 'conditional' | 'loop' | 'delay';
 
 /**
  * Error Handling Configuration
@@ -125,9 +125,11 @@ export interface NeuronStepConfig {
     /** 
      * Method to use for structured output (optional).
      * Default: 'auto' (uses best method for the model)
-     * Options: 'auto', 'function_calling', 'json_mode'
+     * Options: 'auto', 'function_calling', 'json_mode', 'jsonSchema'
      */
-    method?: 'auto' | 'function_calling' | 'json_mode';
+    method?: 'auto' | 'function_calling' | 'json_mode' | 'jsonSchema';
+    /** Optional name for the structured output function (default: 'extract') */
+    name?: string;
   };
   
   /** Error handling configuration for this neuron step */
@@ -184,7 +186,7 @@ export interface ToolStepConfig {
  */
 export interface TransformStepConfig {
   /** Type of transformation to perform */
-  operation: 'map' | 'filter' | 'select' | 'parse-json' | 'append' | 'concat' | 'build-messages' | 'set';
+  operation: 'map' | 'filter' | 'select' | 'parse-json' | 'append' | 'concat' | 'build-messages' | 'set' | 'set-global' | 'get-global';
   
   /** Source field in state to transform (optional for build-messages) */
   inputField?: string;
@@ -230,6 +232,29 @@ export interface TransformStepConfig {
    * If present, return this field directly instead of building from scratch
    */
   useExistingField?: string;
+
+  /**
+   * For set-global/get-global: Global state namespace
+   * Example: 'user-settings', 'workflow-state'
+   */
+  namespace?: string;
+
+  /**
+   * For set-global/get-global: Key within the namespace
+   * Example: 'api_key', 'counter'
+   */
+  key?: string;
+
+  /**
+   * For set-global: TTL in seconds (optional)
+   * If provided, the value will auto-expire after this time
+   */
+  ttlSeconds?: number;
+
+  /**
+   * For set-global: Description of the value (optional)
+   */
+  description?: string;
 }
 
 /**

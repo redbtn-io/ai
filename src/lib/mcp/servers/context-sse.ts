@@ -129,7 +129,8 @@ export class ContextServerSSE extends McpServerSSE {
               role: args.role as 'user' | 'assistant' | 'system',
               content: args.content as string,
               timestamp: args.timestamp as number || Date.now(),
-              toolExecutions: args.toolExecutions as any[] || []
+              toolExecutions: args.toolExecutions as any[] || [],
+              graphRun: args.graphRun as any || undefined
             },
             args.userId as string  // Pass userId as 3rd parameter
           );

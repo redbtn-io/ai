@@ -21,6 +21,25 @@ export const RedGraphState = Annotation.Root({
   logger: Annotation<any>({
     reducer: (x: any, y: any) => y
   }),
+  // NEW: RunPublisher for unified event publishing (run path)
+  runPublisher: Annotation<any>({
+    reducer: (x: any, y: any) => y ?? x  // Keep existing if new is null/undefined
+  }),
+  // Graph event publisher for live visualization
+  graphPublisher: Annotation<any>({
+    reducer: (x: any, y: any) => y ?? x  // Keep existing if new is null/undefined
+  }),
+  // Message ID for SSE event streaming
+  messageId: Annotation<string | undefined>({
+    reducer: (x: string | undefined, y: string | undefined) => y ?? x
+  }),
+  // Graph metadata for event publishing
+  graphName: Annotation<string | undefined>({
+    reducer: (x: string | undefined, y: string | undefined) => y ?? x
+  }),
+  graphId: Annotation<string | undefined>({
+    reducer: (x: string | undefined, y: string | undefined) => y ?? x
+  }),
   // Universal Node Data - Container for all node-specific dynamic data
   // Use this for ANY data that is specific to a node/feature and not truly generic
   // Examples: executionPlan, currentStep, searchResults, routingDecision, etc.
@@ -47,12 +66,14 @@ export const RedGraphState = Annotation.Root({
  * Recursively merges nested objects to preserve all nested fields
  */
 function deepMergeData(target: Record<string, any>, source: Record<string, any>): Record<string, any> {
-  // console.log('[DataReducer] Deep merging data:', {
-  //   targetKeys: Object.keys(target || {}),
-  //   sourceKeys: Object.keys(source || {}),
-  //   targetExecutorFlag: target?.executorAwaitingReturn,
-  //   sourceExecutorFlag: source?.executorAwaitingReturn
-  // });
+  const sourceKeys = Object.keys(source || {});
+  if (sourceKeys.includes('messages') || sourceKeys.includes('contextMessages')) {
+    console.log('[DataReducer] MESSAGES DETECTED! Deep merging data:', {
+      targetKeys: Object.keys(target || {}),
+      sourceKeys: sourceKeys,
+      messagesType: Array.isArray(source?.messages) ? 'array' : typeof source?.messages
+    });
+  }
   
   const result = { ...target };
   
@@ -69,7 +90,10 @@ function deepMergeData(target: Record<string, any>, source: Record<string, any>)
     }
   }
   
-  // console.log('[DataReducer] Merge result keys:', Object.keys(result), 'executorFlag:', result.executorAwaitingReturn);
+  const resultKeys = Object.keys(result);
+  if (resultKeys.includes('messages') || resultKeys.includes('contextMessages')) {
+    console.log('[DataReducer] MESSAGES IN RESULT! Merge result keys:', resultKeys);
+  }
   
   return result;
 }
