@@ -89,7 +89,7 @@ export const universalNode = async (state: any): Promise<Partial<any>> => {
   // graphNodeId is the unique node instance ID in the graph (used for event publishing)
   // nodeId is the registry lookup key (can be node type like "context" or explicit custom node ID)
   const graphNodeId: string = (nodeConfig as any).graphNodeId || (nodeConfig as any).nodeId || 'universal';
-  let nodeId: string = (nodeConfig as any).nodeId || 'universal';
+  const nodeId: string = (nodeConfig as any).nodeId || 'universal';
   
   // Check if this is a nodeId reference (registry mode)
   if ((nodeConfig as any).nodeId && !(nodeConfig as any).steps) {

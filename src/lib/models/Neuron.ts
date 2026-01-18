@@ -5,7 +5,7 @@
  */
 
 import mongoose, { Schema, Model } from 'mongoose';
-import { NeuronDocument, NeuronProvider, NeuronRole } from '../types/neuron';
+import { NeuronDocument } from '../types/neuron';
 
 /**
  * Neuron schema

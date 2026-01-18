@@ -3,7 +3,6 @@
  */
 
 import type { MemoryManager } from '../../lib/memory/memory';
-import type { ChatOllama } from '@langchain/ollama';
 import { extractThinking } from '../../lib/utils/thinking';
 import { invokeWithRetry } from '../../lib/utils/retry';
 

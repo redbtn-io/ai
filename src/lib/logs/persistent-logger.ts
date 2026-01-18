@@ -2,7 +2,7 @@ import Redis from 'ioredis';
 import { Logger } from './logger';
 import { getDatabase } from '../memory/database';
 import type { StoredLog, Generation as DBGeneration } from '../memory/database';
-import type { LogEntry, Generation } from './types';
+import type { LogEntry } from './types';
 
 /**
  * Enhanced Logger with MongoDB persistence

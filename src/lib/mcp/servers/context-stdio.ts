@@ -7,7 +7,7 @@
 
 import { McpServerStdio } from '../server-stdio';
 import { CallToolResult } from '../types';
-import { getDatabase, StoredMessage, StoredToolExecution } from '../../memory/database';
+import { getDatabase, StoredMessage } from '../../memory/database';
 
 class ContextServerStdio extends McpServerStdio {
   constructor() {

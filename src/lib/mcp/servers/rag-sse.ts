@@ -3,7 +3,6 @@
  * Provides vector database operations via HTTP/SSE
  */
 
-import express from 'express';
 import { McpServerSSE } from '../server-sse';
 import { CallToolResult } from '../types';
 import { VectorStoreManager, ChunkingConfig, SearchConfig } from '../../memory/vectors';

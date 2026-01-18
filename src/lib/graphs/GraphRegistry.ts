@@ -15,7 +15,7 @@
 
 import { LRUCache } from "lru-cache";
 import { getDatabase, DatabaseManager } from "../memory/database";
-import { Graph, GraphDocument } from "../models/Graph";
+import { Graph } from "../models/Graph";
 import { GraphConfig, CompiledGraph } from "../types/graph";
 import { compileGraphFromConfig, GraphCompilationError } from "./compiler";
 import type { RedConfig } from "../../index";

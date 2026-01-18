@@ -7,7 +7,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { Tool, CallToolResult, ToolsListResult } from './types';
+import { CallToolResult, ToolsListResult } from './types';
 import { EventEmitter } from 'events';
 
 export class McpClientStdio {

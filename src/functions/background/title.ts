@@ -3,7 +3,6 @@
  */
 
 import type { Red } from '../../index';
-import type { ChatOllama } from '@langchain/ollama';
 import { extractThinking } from '../../lib/utils/thinking';
 import { getDatabase } from '../../lib/memory/database';
 import { invokeWithRetry } from '../../lib/utils/retry';

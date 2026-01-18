@@ -28,6 +28,14 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
       // Allow require for dynamic imports
       '@typescript-eslint/no-require-imports': 'off',
+      // Allow this aliasing (common in class methods)
+      '@typescript-eslint/no-this-alias': 'off',
+      // Allow case block declarations
+      'no-case-declarations': 'off',
+      // Allow escape characters in strings
+      'no-useless-escape': 'off',
+      // Allow control characters in regex (for parsing)
+      'no-control-regex': 'off',
     },
   },
   {

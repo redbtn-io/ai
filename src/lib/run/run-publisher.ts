@@ -18,7 +18,6 @@ import {
   type RunState,
   type RunEvent,
   type RunOutput,
-  type NodeProgress,
   type ToolExecution,
   type TokenMetadata,
   RunKeys,
@@ -394,7 +393,7 @@ export class RunPublisher {
     // Log node start info for debugging
     if (DEBUG) {
       try {
-        // eslint-disable-next-line no-console
+         
         console.log(`[RunPublisher] nodeStart run=${this.runId} node=${nodeId}`);
       } catch (e) {
         // ignore
@@ -475,7 +474,7 @@ export class RunPublisher {
     // Log node complete info for debugging
     if (DEBUG) {
       try {
-        // eslint-disable-next-line no-console
+         
         console.log(`[RunPublisher] nodeComplete run=${this.runId} node=${nodeId} duration_ms=${nodeProgress?.duration ?? 'n/a'}`);
       } catch (e) {
         // ignore
@@ -913,7 +912,7 @@ export class RunPublisher {
         const now = Date.now();
         const evtTs = (event as any).timestamp as number | undefined;
         const delta = evtTs ? now - evtTs : undefined;
-        // eslint-disable-next-line no-console
+         
         console.log(`[RunPublisher] publish run=${this.runId} type=${event.type} delta_ms=${delta ?? 'n/a'}`);
       }
     } catch (err) {

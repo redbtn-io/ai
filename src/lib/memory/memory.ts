@@ -5,7 +5,7 @@
 
 import Redis from 'ioredis';
 import { countTokens, freeTiktoken } from '../utils/tokenizer';
-import { getDatabase, StoredMessage, StoredToolExecution, StoredGraphRun } from './database';
+import { getDatabase, StoredToolExecution, StoredGraphRun } from './database';
 
 export interface ConversationMessage {
   id?: string; // Optional message ID (e.g., msg_1234567890_abc123def)

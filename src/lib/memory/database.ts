@@ -9,11 +9,11 @@ import mongoose, { Connection } from 'mongoose';
 import { ObjectId, Document } from 'mongodb';
 
 // Import models
-import Message, { IMessage, MessageDocument } from '../models/Message';
-import Conversation, { IConversation, ConversationDocument } from '../models/Conversation';
-import Log, { ILog, LogDocument } from '../models/Log';
-import Generation, { IGeneration, GenerationDocument } from '../models/Generation';
-import Thought, { IThought, ThoughtDocument } from '../models/Thought';
+import Message, { IMessage } from '../models/Message';
+import Conversation, { IConversation } from '../models/Conversation';
+import Log, { ILog } from '../models/Log';
+import Generation, { IGeneration } from '../models/Generation';
+import Thought, { IThought } from '../models/Thought';
 
 // ============================================================================
 // TYPE RE-EXPORTS (for backward compatibility)

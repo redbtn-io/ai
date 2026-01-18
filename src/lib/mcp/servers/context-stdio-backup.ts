@@ -581,7 +581,7 @@ export class ContextServer extends McpServer {
       const duration = Date.now() - startTime;
       console.log(`[Context] ✓ Retrieved summary in ${duration}ms`);
 
-      let result: any = { conversationId };
+      const result: any = { conversationId };
 
       if (summaryType === 'both') {
         result.trailingSummary = trailingSummary;

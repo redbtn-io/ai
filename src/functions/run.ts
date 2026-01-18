@@ -20,7 +20,6 @@ import {
   RunPublisher,
   RunLock,
   type RunState,
-  type RunLockHandle,
   createRunPublisher,
 } from '../lib/run';
 
