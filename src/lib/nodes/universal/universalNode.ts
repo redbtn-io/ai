@@ -20,11 +20,11 @@
 import type { UniversalNodeConfig, UniversalStep, ResolvedParameters } from './types';
 import { executeStep } from './stepExecutor';
 import { getNodeSystemPrefix } from '../../utils/node-helpers';
-import { 
-  resolveParameters, 
-  validateParameters, 
-  parametersMapToObject,
-  type NodeParameters 
+import {
+    resolveParameters,
+    validateParameters,
+    parametersMapToObject,
+    type NodeParameters
 } from '../../models/Node';
 import type { RunPublisher } from '../../run';
 
