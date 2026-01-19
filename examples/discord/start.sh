@@ -9,8 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Paths
-AI_DIR="$(cd ../.. && pwd)"
-TAR_NAME="redbtn-ai-0.0.1.tgz"
+REDBTN_DIR="$(cd ../.. && pwd)"
+TAR_NAME="redbtn-redbtn-0.0.1-alpha.tgz"
 
 # Load environment variables from .env or .env.local if they exist
 if [ -f ".env.local" ]; then
@@ -25,17 +25,17 @@ elif [ -f ".env" ]; then
     set +a
 fi
 
-# Build and pack AI package
-echo "📦 Building AI package..."
-cd "$AI_DIR"
+# Build and pack redbtn package
+echo "📦 Building redbtn package..."
+cd "$REDBTN_DIR"
 rm -f "$TAR_NAME"  # Remove old tarball first
 npm run build
 npm pack
 
 # Install package into discord example
-echo "📦 Installing AI package..."
+echo "📦 Installing redbtn package..."
 cd "$SCRIPT_DIR"
-npm install "$AI_DIR/$TAR_NAME"
+npm install "$REDBTN_DIR/$TAR_NAME"
 
 # Check for DISCORD_BOT_TOKEN
 if [ -z "$DISCORD_BOT_TOKEN" ]; then

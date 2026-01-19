@@ -24,6 +24,10 @@ export * from './servers/system-stdio';
 export * from './servers/rag-stdio';
 export * from './servers/context-stdio';
 
+// SSE transport exports
+export * from './client-sse';
+export * from './UserMcpManager';
+
 // Legacy exports for backward compatibility
 export { WebServer as WebSearchServer } from './servers/web';
 export { SystemServer as SystemCommandServer } from './servers/system';

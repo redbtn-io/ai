@@ -183,10 +183,12 @@ export interface ToolStepConfig {
  * - append: Append value to array (creates array if doesn't exist)
  * - concat: Concatenate two arrays
  * - build-messages: Build LLM message array with role/content pairs
+ * - increment: Add to a number value (defaults to +1)
+ * - decrement: Subtract from a number value (defaults to -1)
  */
 export interface TransformStepConfig {
   /** Type of transformation to perform */
-  operation: 'map' | 'filter' | 'select' | 'parse-json' | 'append' | 'concat' | 'build-messages' | 'set' | 'set-global' | 'get-global';
+  operation: 'map' | 'filter' | 'select' | 'json' | 'parse-json' | 'append' | 'concat' | 'build-messages' | 'set' | 'set-global' | 'get-global' | 'increment' | 'decrement';
   
   /** Source field in state to transform (optional for build-messages) */
   inputField?: string;

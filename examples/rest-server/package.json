@@ -1,5 +1,5 @@
 {
-  "name": "@redbtn/ai-rest-server-example",
+  "name": "@redbtn/redbtn-rest-server-example",
   "version": "1.0.0",
   "description": "OpenAI-compatible REST API server example for Red AI",
   "private": true,
@@ -9,7 +9,7 @@
     "client": "tsx client.ts"
   },
   "dependencies": {
-    "@redbtn/ai": "file:../..",
+    "@redbtn/redbtn": "file:../..",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0"

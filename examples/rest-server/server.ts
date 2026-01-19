@@ -9,7 +9,7 @@ import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
-import { Red, RedConfig } from '@redbtn/ai';
+import { Red, RedConfig } from '@redbtn/redbtn';
 
 // Check if running in think mode (no HTTP server, just autonomous thinking)
 const THINK_MODE = process.env.THINK === 'true' || process.env.THINK === '1';

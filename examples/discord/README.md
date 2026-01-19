@@ -323,7 +323,7 @@ Discord Channel (chunked messages)
 ## Dependencies
 
 - `discord.js` - Discord API client
-- `@redbtn/ai` - Red AI library
+- `@redbtn/redbtn` - Red AI library
 - `dotenv` - Environment variable loading
 
 ## License

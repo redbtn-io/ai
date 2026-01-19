@@ -1,5 +1,5 @@
 {
-  "name": "@redbtn/ai-discord-example",
+  "name": "@redbtn/redbtn-discord-example",
   "version": "1.0.0",
   "description": "Discord bot example for Red AI",
   "private": true,
@@ -8,7 +8,7 @@
     "dev": "tsx watch discord-bot.ts"
   },
   "dependencies": {
-    "@redbtn/ai": "file:../../redbtn-ai-0.0.1.tgz",
+    "@redbtn/redbtn": "file:../../redbtn-redbtn-0.0.1-alpha.tgz",
     "discord.js": "^14.16.3",
     "dotenv": "^17.2.3"
   },

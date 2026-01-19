@@ -77,8 +77,8 @@ examples/
 
 Each example has its own `package.json` with specific dependencies:
 
-- **Discord Bot**: `discord.js`, `@redbtn/ai`
-- **REST Server**: `express`, `cors`, `@redbtn/ai`
+- **Discord Bot**: `discord.js`, `@redbtn/redbtn`
+- **REST Server**: `express`, `cors`, `@redbtn/redbtn`
 
 This approach keeps the main Red AI library lean while providing rich examples.
 
@@ -169,7 +169,7 @@ To add a new example:
 2. Add a `package.json` with example-specific dependencies
 3. Include a comprehensive `README.md`
 4. Update this file to list the new example
-5. Ensure imports use `@redbtn/ai` (not relative paths)
+5. Ensure imports use `@redbtn/redbtn` (not relative paths)
 
 ## 📄 License
 

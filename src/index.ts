@@ -15,6 +15,7 @@ import * as background from "./functions/background";
 import { run as runFunction } from "./functions/run";
 import { McpRegistry } from "./lib/mcp/registry";
 import { StdioServerPool } from "./lib/mcp/stdio-pool";
+import { UserMcpManager, ToolWithSource } from "./lib/mcp/UserMcpManager";
 
 // Export run types and function
 export {
@@ -75,6 +76,10 @@ export {
   Tool,
   CallToolResult,
   ServerRegistration,
+  UserMcpManager,
+  ToolWithSource,
+  McpConnectionConfig,
+  TestResult as McpTestResult,
 } from "./lib/mcp";
 
 // Export Run system components (unified execution)
@@ -211,6 +216,7 @@ export class Red {
   public logger!: PersistentLogger;
   public mcpRegistry!: McpRegistry; // For external HTTP/SSE servers
   public mcpStdioPool!: StdioServerPool; // For internal stdio servers
+  public userMcpManager!: UserMcpManager; // For user's custom MCP connections
   private redis!: any; // Redis client for heartbeat
 
   /**
@@ -242,6 +248,9 @@ export class Red {
     
     // Initialize stdio server pool for internal tools (pass messageQueue for tool event publishing)
     this.mcpStdioPool = new StdioServerPool(undefined, this.messageQueue);
+    
+    // Initialize user MCP manager for per-user custom connections
+    this.userMcpManager = new UserMcpManager();
   }
 
   // --- Private Internal Methods ---
@@ -390,6 +399,14 @@ export class Red {
       console.warn('[Red] Error disconnecting external MCP clients:', error);
     }
     
+    // Shutdown user MCP manager (disconnects user custom connections)
+    try {
+      await this.userMcpManager.shutdown();
+      console.log('[Red] User MCP connections disconnected');
+    } catch (error) {
+      console.warn('[Red] Error shutting down user MCP manager:', error);
+    }
+    
     // Close Redis connection
     if (this.redis) {
       await this.redis.quit();
@@ -441,16 +458,19 @@ export class Red {
 
   /**
    * Call an MCP tool by name with comprehensive logging
-   * Automatically routes to the correct MCP server (stdio or HTTP/SSE)
+   * Automatically routes to the correct MCP server:
+   * 1. User's custom MCP servers (if userId provided)
+   * 2. Internal stdio servers (global tools)
+   * 3. External HTTP/SSE servers (mcpRegistry fallback)
    * @param toolName The name of the tool to call
    * @param args The arguments to pass to the tool
-   * @param context Optional logging context (conversationId, generationId, messageId)
+   * @param context Optional logging context (conversationId, generationId, messageId, userId)
    * @returns The tool execution result
    */
   public async callMcpTool(
     toolName: string, 
     args: Record<string, unknown>,
-    context?: { conversationId?: string; generationId?: string; messageId?: string }
+    context?: { conversationId?: string; generationId?: string; messageId?: string; userId?: string }
   ): Promise<any> {
     const startTime = Date.now();
     
@@ -473,8 +493,41 @@ export class Red {
       }
     });
 
+    // 1. Try user's custom MCP servers first (if userId provided)
+    if (context?.userId) {
+      const connectionId = await this.userMcpManager.findToolConnection(context.userId, toolName);
+      if (connectionId) {
+        try {
+          const result = await this.userMcpManager.callTool(context.userId, toolName, args, context);
+          const duration = Date.now() - startTime;
+
+          await this.logger.log({
+            level: result.isError ? 'warn' : 'success',
+            category: 'mcp',
+            message: result.isError 
+              ? `⚠️ MCP Tool Error: ${toolName} (${duration}ms)`
+              : `✓ MCP Tool Complete: ${toolName} (${duration}ms)`,
+            conversationId: context?.conversationId,
+            generationId: context?.generationId,
+            metadata: {
+              toolName,
+              duration,
+              isError: result.isError || false,
+              resultLength: result.content?.[0]?.text?.length || 0,
+              protocol: 'MCP/user-custom',
+              connectionId,
+            }
+          });
+
+          return result;
+        } catch (userError) {
+          console.log(`[Red] User custom tool call failed (${toolName}): ${userError}, falling back to global tools`);
+        }
+      }
+    }
+
     try {
-      // Try stdio pool first (internal tools)
+      // 2. Try stdio pool (global internal tools)
       const result = await this.mcpStdioPool.callTool(toolName, args, context);
       const duration = Date.now() - startTime;
 
@@ -576,6 +629,7 @@ export class Red {
   /**
    * Get all available MCP tools (stdio + HTTP/SSE)
    * @returns Array of available tools with their server info
+   * @deprecated Use getAllTools() instead for source-aware tool listing
    */
   public async getMcpTools(): Promise<Array<{ server: string; tools: any[] }>> {
     // Get stdio tools
@@ -597,6 +651,91 @@ export class Red {
     }));
     
     return [...stdioTools, ...httpToolsArray];
+  }
+
+  /**
+   * Get all available tools with source information (global + user's custom)
+   * @param userId Optional user ID to include their custom MCP tools
+   * @returns Tools organized by source with metadata
+   */
+  public async getAllTools(userId?: string): Promise<{
+    tools: ToolWithSource[];
+    toolsByServer: Array<{ server: string; source: 'global' | 'custom'; connectionId?: string; tools: ToolWithSource[] }>;
+    sources: { global: string[]; custom: string[] };
+    count: number;
+  }> {
+    const allTools: ToolWithSource[] = [];
+    const toolsByServer: Array<{ server: string; source: 'global' | 'custom'; connectionId?: string; tools: ToolWithSource[] }> = [];
+    const sources = { global: [] as string[], custom: [] as string[] };
+
+    // 1. Get global stdio tools
+    const stdioTools = await this.mcpStdioPool.getAllTools();
+    for (const { server, tools } of stdioTools) {
+      sources.global.push(server);
+      const serverTools: ToolWithSource[] = tools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        source: 'global' as const,
+        serverName: server,
+      }));
+      allTools.push(...serverTools);
+      toolsByServer.push({ server, source: 'global', tools: serverTools });
+    }
+
+    // 2. Get global HTTP/SSE tools (mcpRegistry)
+    const httpTools = this.mcpRegistry.getAllTools();
+    const httpByServer: Record<string, ToolWithSource[]> = {};
+    for (const { server, tool } of httpTools) {
+      if (!httpByServer[server]) {
+        httpByServer[server] = [];
+        sources.global.push(`${server} (HTTP)`);
+      }
+      const toolWithSource: ToolWithSource = {
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        source: 'global',
+        serverName: `${server} (HTTP)`,
+      };
+      httpByServer[server].push(toolWithSource);
+      allTools.push(toolWithSource);
+    }
+    for (const [server, tools] of Object.entries(httpByServer)) {
+      toolsByServer.push({ server: `${server} (HTTP)`, source: 'global', tools });
+    }
+
+    // 3. Get user's custom tools (if userId provided)
+    if (userId) {
+      const userTools = await this.userMcpManager.getUserTools(userId);
+      
+      // Group by server
+      const byConnection: Record<string, { name: string; connectionId: string; tools: ToolWithSource[] }> = {};
+      for (const tool of userTools) {
+        if (!tool.connectionId) continue;
+        if (!byConnection[tool.connectionId]) {
+          byConnection[tool.connectionId] = {
+            name: tool.serverName,
+            connectionId: tool.connectionId,
+            tools: [],
+          };
+          sources.custom.push(tool.serverName);
+        }
+        byConnection[tool.connectionId].tools.push(tool);
+        allTools.push(tool);
+      }
+      
+      for (const { name, connectionId, tools } of Object.values(byConnection)) {
+        toolsByServer.push({ server: name, source: 'custom', connectionId, tools });
+      }
+    }
+
+    return {
+      tools: allTools,
+      toolsByServer,
+      sources,
+      count: allTools.length,
+    };
   }
 
 }

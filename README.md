@@ -1,4 +1,4 @@
-# Red AI Library (`@redbtn/ai`)
+# Red AI Library (`@redbtn/redbtn`)
 
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
@@ -186,7 +186,7 @@ git config core.hooksPath .githooks
 ## 📦 Installation
 
 ```bash
-npm install @redbtn/ai
+npm install @redbtn/redbtn
 ```
 
 ## 🏁 Quick Start
@@ -213,7 +213,7 @@ ollama serve
 ### Basic Usage
 
 ```typescript
-import { Red, RedConfig } from '@redbtn/ai';
+import { Red, RedConfig } from '@redbtn/redbtn';
 
 // Configuration
 const config: RedConfig = {
@@ -1121,7 +1121,7 @@ The Next.js webapp (`webapp/`) provides a complete chat interface and integrates
 ```typescript
 // From webapp/src/lib/red.ts
 
-import { Red, RedConfig } from '@redbtn/ai';
+import { Red, RedConfig } from '@redbtn/redbtn';
 
 const config: RedConfig = {
   redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
@@ -1197,7 +1197,7 @@ OpenAI-compatible chat completions endpoint:
 
 ```json
 {
-  "@redbtn/ai": "file:../ai/redbtn-ai-0.0.1.tgz",
+  "@redbtn/redbtn": "file:../redbtn/redbtn-redbtn-0.0.1-alpha.tgz",
   "next": "15.5.4",
   "react": "19.1.0",
   "reactflow": "^11.11.4",
@@ -1350,7 +1350,7 @@ npm run build
 
 # Pack for local linking
 npm run pack
-# Creates: redbtn-ai-0.0.1.tgz
+# Creates: redbtn-redbtn-0.0.1-alpha.tgz
 ```
 
 ### Available Scripts

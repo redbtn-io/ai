@@ -71,12 +71,14 @@ export async function executeTransform(
       }
     }
     
-    // Append, build-messages, set, set-global, get-global, and concat (with fallback) operations allow undefined input
+    // Append, build-messages, set, set-global, get-global, increment, decrement, and concat (with fallback) operations allow undefined input
     const allowUndefinedInput = config.operation === 'append' || 
                                 config.operation === 'build-messages' || 
                                 config.operation === 'set' ||
                                 config.operation === 'set-global' ||
                                 config.operation === 'get-global' ||
+                                config.operation === 'increment' ||
+                                config.operation === 'decrement' ||
                                 (config.operation === 'concat' && (config as any).fallbackToConcat);
     
     if (inputData === undefined && !allowUndefinedInput) {
@@ -103,7 +105,8 @@ export async function executeTransform(
         result = executeSetOperation(config, state);
         break;
       
-      case 'parse-json':
+      case 'json':
+      case 'parse-json': // backward compatibility
         result = executeParseJsonOperation(config, inputData);
         break;
       
@@ -125,6 +128,14 @@ export async function executeTransform(
       
       case 'get-global':
         result = await executeGetGlobalOperation(config, state);
+        break;
+      
+      case 'increment':
+        result = executeIncrementOperation(config, inputData, state);
+        break;
+      
+      case 'decrement':
+        result = executeDecrementOperation(config, inputData, state);
         break;
       
       default:
@@ -355,42 +366,55 @@ function evaluateCondition(conditionStr: string): boolean {
 }
 
 /**
- * Parse JSON operation: Parse JSON string into object/array
+ * JSON operation: Bidirectional JSON conversion
  * 
- * Example:
- * inputData: '{"confidence": 0.9, "nextNode": "respond"}'
- * result: { confidence: 0.9, nextNode: "respond" }
+ * - String input → Parse to object/array
+ * - Object/array input → Stringify to JSON string
+ * 
+ * Examples:
+ * inputData: '{"confidence": 0.9}' → { confidence: 0.9 }
+ * inputData: { confidence: 0.9 } → '{"confidence":0.9}'
  * 
  * @param config - Transform step configuration
- * @param inputData - JSON string to parse
- * @returns Parsed object or array
+ * @param inputData - JSON string or object/array
+ * @returns Parsed object or stringified JSON
  */
 function executeParseJsonOperation(
   config: TransformStepConfig,
   inputData: any
 ): any {
-  if (typeof inputData !== 'string') {
-    throw new Error('Parse JSON operation requires input to be a string');
-  }
-  
-  // Try direct parse first (fast path for clean JSON)
-  try {
-    return JSON.parse(inputData.trim());
-  } catch (directError) {
-    // Direct parse failed - use robust extraction to handle noisy LLM output
-    const extracted = extractJSON(inputData);
-    
-    if (extracted) {
-      if (DEBUG) console.log('[TransformExecutor] Extracted JSON from noisy LLM response');
-      return extracted;
+  // Bidirectional: detect input type and convert accordingly
+  if (typeof inputData === 'string') {
+    // String → Parse to object/array
+    // Try direct parse first (fast path for clean JSON)
+    try {
+      return JSON.parse(inputData.trim());
+    } catch (directError) {
+      // Direct parse failed - use robust extraction to handle noisy LLM output
+      const extracted = extractJSON(inputData);
+      
+      if (extracted) {
+        if (DEBUG) console.log('[TransformExecutor] Extracted JSON from noisy LLM response');
+        return extracted;
+      }
+      
+      // Extraction failed - provide helpful error with preview
+      const preview = inputData.substring(0, 300);
+      throw new Error(
+        `Failed to parse JSON: ${directError instanceof Error ? directError.message : String(directError)}\n` +
+        `Preview: ${preview}${inputData.length > 300 ? '...' : ''}`
+      );
     }
-    
-    // Extraction failed - provide helpful error with preview
-    const preview = inputData.substring(0, 300);
-    throw new Error(
-      `Failed to parse JSON: ${directError instanceof Error ? directError.message : String(directError)}\n` +
-      `Preview: ${preview}${inputData.length > 300 ? '...' : ''}`
-    );
+  } else if (typeof inputData === 'object' && inputData !== null) {
+    // Object/array → Stringify to JSON
+    try {
+      return JSON.stringify(inputData);
+    } catch (error) {
+      throw new Error(`Failed to stringify to JSON: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } else {
+    // Primitives (number, boolean, null) → stringify directly
+    return JSON.stringify(inputData);
   }
 }
 
@@ -806,4 +830,84 @@ async function executeGetGlobalOperation(
   
   // Return the value to be stored in outputField
   return value;
+}
+
+/**
+ * Increment operation: Add to a number value
+ * 
+ * Example:
+ * inputData: 5
+ * value: 2 (optional, defaults to 1)
+ * result: 7
+ * 
+ * @param config - Transform step configuration
+ * @param inputData - Current number value (or undefined to start from 0)
+ * @param state - Current graph state
+ * @returns Incremented number
+ */
+function executeIncrementOperation(
+  config: TransformStepConfig,
+  inputData: any,
+  state: any
+): number {
+  // Get the amount to increment by (default 1)
+  let incrementBy = 1;
+  if (config.value !== undefined) {
+    if (typeof config.value === 'number') {
+      incrementBy = config.value;
+    } else if (typeof config.value === 'string') {
+      // Try to parse or render template
+      const rendered = config.value.includes('{{') 
+        ? renderTemplate(config.value, state)
+        : config.value;
+      incrementBy = Number(rendered) || 1;
+    }
+  }
+  
+  // Get current value (default 0)
+  const currentValue = typeof inputData === 'number' ? inputData : 0;
+  
+  if (DEBUG) console.log(`[IncrementOperation] ${currentValue} + ${incrementBy}`);
+  
+  return currentValue + incrementBy;
+}
+
+/**
+ * Decrement operation: Subtract from a number value
+ * 
+ * Example:
+ * inputData: 5
+ * value: 2 (optional, defaults to 1)
+ * result: 3
+ * 
+ * @param config - Transform step configuration
+ * @param inputData - Current number value (or undefined to start from 0)
+ * @param state - Current graph state
+ * @returns Decremented number
+ */
+function executeDecrementOperation(
+  config: TransformStepConfig,
+  inputData: any,
+  state: any
+): number {
+  // Get the amount to decrement by (default 1)
+  let decrementBy = 1;
+  if (config.value !== undefined) {
+    if (typeof config.value === 'number') {
+      decrementBy = config.value;
+    } else if (typeof config.value === 'string') {
+      // Try to parse or render template
+      const rendered = config.value.includes('{{') 
+        ? renderTemplate(config.value, state)
+        : config.value;
+      decrementBy = Number(rendered) || 1;
+    }
+  }
+  
+  // Get current value (default 0)
+  const currentValue = typeof inputData === 'number' ? inputData : 0;
+  
+  if (DEBUG) console.log(`[DecrementOperation] ${currentValue} - ${decrementBy}`);
+  
+  return currentValue - decrementBy;
 }

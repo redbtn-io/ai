@@ -22,7 +22,7 @@
 
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Message, TextChannel, Partials } from 'discord.js';
-import { Red, RedConfig } from '@redbtn/ai';
+import { Red, RedConfig } from '@redbtn/redbtn';
 
 // Configuration
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;

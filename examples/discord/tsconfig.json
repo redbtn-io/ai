@@ -11,7 +11,7 @@
     "resolveJsonModule": true,
     "moduleResolution": "bundler",
     "paths": {
-      "@redbtn/ai": ["../../src/index.ts"]
+      "@redbtn/redbtn": ["../../src/index.ts"]
     }
   },
   "include": ["*.ts"],
