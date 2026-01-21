@@ -27,6 +27,27 @@ import {
 // Types
 // =============================================================================
 
+import type { 
+  UserConnection, 
+  ConnectionProvider,
+} from '../lib/connections';
+
+import { ConnectionManager } from '../lib/connections';
+
+
+/**
+ * Connection fetcher callbacks for runtime credential access
+ * These are provided by the webapp which has database access
+ */
+export interface ConnectionFetcher {
+  /** Fetch a connection by ID */
+  fetchConnection: (connectionId: string) => Promise<{ connection: UserConnection; provider: ConnectionProvider } | null>;
+  /** Fetch the default connection for a provider */
+  fetchDefaultConnection: (providerId: string) => Promise<{ connection: UserConnection; provider: ConnectionProvider } | null>;
+  /** Refresh an OAuth connection's tokens */
+  refreshConnection?: (connectionId: string) => Promise<UserConnection | null>;
+}
+
 /**
  * Options for run execution
  */
@@ -51,6 +72,9 @@ export interface RunOptions {
     device?: 'phone' | 'speaker' | 'web';
     application?: 'redHome' | 'redChat' | 'redAssistant' | 'automation';
   };
+  
+  /** Connection fetcher for accessing user connections during execution */
+  connectionFetcher?: ConnectionFetcher;
 }
 
 /**
@@ -303,6 +327,17 @@ CRITICAL RULES:
 7. Be concise and helpful - answer the question directly without extra explanations`;
 
   const now = new Date();
+  
+  // Create ConnectionManager if fetcher is provided
+  let connectionManager: ConnectionManager | undefined;
+  if (options.connectionFetcher) {
+    connectionManager = new ConnectionManager({
+      userId: options.userId,
+      fetchConnection: options.connectionFetcher.fetchConnection,
+      fetchDefaultConnection: options.connectionFetcher.fetchDefaultConnection,
+      refreshConnection: options.connectionFetcher.refreshConnection,
+    });
+  }
 
   return {
     // Infrastructure components
@@ -317,6 +352,9 @@ CRITICAL RULES:
         meta?: any
       ) => red.callMcpTool(toolName, args, meta),
     },
+    
+    // Connection Manager for accessing user's external service credentials
+    connectionManager,
 
     // NEW: RunPublisher for unified event publishing
     runPublisher: publisher,

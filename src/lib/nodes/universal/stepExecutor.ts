@@ -11,6 +11,7 @@ import { executeTool } from './executors/toolExecutor';
 import { executeTransform } from './executors/transformExecutor';
 import { executeConditional } from './executors/conditionalExecutor';
 import { executeLoop } from './executors/loopExecutor';
+import { executeConnection } from './executors/connectionExecutor';
 
 /**
  * Execute a single step based on its type
@@ -48,6 +49,9 @@ export async function executeStep(
     
     case 'loop':
       return await executeLoop(step.config as any, state);
+    
+    case 'connection':
+      return await executeConnection(step.config as any, state);
     
     case 'delay': {
       const delayMs = (step.config as any)?.ms ?? 1000;

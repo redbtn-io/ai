@@ -24,6 +24,7 @@ export {
   type RunOptions,
   type RunResult,
   type StreamingRunResult,
+  type ConnectionFetcher,
 } from "./functions/run";
 
 // Export database utilities for external use
@@ -110,6 +111,22 @@ export {
   RunConfig,
   createInitialRunState,
 } from "./lib/run";
+
+// Export Connection Manager for external auth/credential access
+export {
+  ConnectionManager,
+  decryptCredentials,
+  buildAuthHeaders,
+  resolveCredentials,
+  isTokenExpiring,
+  type ConnectionCredentials,
+  type TokenMetadata,
+  type AccountInfo,
+  type UserConnection,
+  type ConnectionProvider,
+  type ResolvedCredentials,
+  type ConnectionContext,
+} from "./lib/connections";
 
 // Export Neuron system components
 export {
@@ -322,7 +339,7 @@ export class Red {
       process.stdout.write(`\r✓ Red AI initialized (${totalTools} MCP tools via stdio)\n`);
     } catch (error) {
       console.warn('⚠️ MCP stdio server startup failed:', error);
-      console.warn('  Tool calls may fail. Check server scripts in ai/src/lib/mcp/servers/');
+      console.warn('  Tool calls may fail. Check server scripts in redbtn/src/lib/mcp/servers/');
     }
     
     // Start heartbeat to register node as active

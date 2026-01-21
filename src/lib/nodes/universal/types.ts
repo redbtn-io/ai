@@ -4,17 +4,20 @@
  * This module defines the type system for universal nodes - config-driven nodes
  * that execute 1-N steps sequentially without requiring code deployment.
  * 
- * Universal nodes support 4 step types:
+ * Universal nodes support step types:
  * - neuron: Execute LLM calls
  * - tool: Call MCP tools
  * - transform: Transform data (map/filter/select)
  * - conditional: Set fields based on conditions
+ * - loop: Iterate over steps
+ * - delay: Wait for specified time
+ * - connection: Access user's external service credentials
  */
 
 /**
  * Step types available in universal nodes
  */
-export type StepType = 'neuron' | 'tool' | 'transform' | 'conditional' | 'loop' | 'delay';
+export type StepType = 'neuron' | 'tool' | 'transform' | 'conditional' | 'loop' | 'delay' | 'connection';
 
 /**
  * Error Handling Configuration
@@ -349,7 +352,58 @@ export interface LoopStepConfig {
 }
 
 /**
- * Universal Step - One of the 5 step types
+ * Connection Step - Access user's external service credentials
+ * 
+ * Use cases:
+ * - Get OAuth tokens for API calls (Google, GitHub, Slack, etc.)
+ * - Get API keys for external services (OpenAI, SendGrid, etc.)
+ * - Make authenticated HTTP requests to third-party services
+ * 
+ * The connection step fetches credentials from the user's connected accounts
+ * and makes them available in the state for subsequent tool/transform steps.
+ * 
+ * Security: Credentials are decrypted at runtime but never logged or exposed.
+ */
+export interface ConnectionStepConfig {
+  /** 
+   * Connection ID to use. If not provided, uses the default connection for the provider.
+   * Supports template variables: "{{state.connectionId}}"
+   */
+  connectionId?: string;
+  
+  /**
+   * Provider ID to use for default connection lookup.
+   * Required if connectionId is not provided.
+   * Examples: 'google', 'github', 'openai', 'twilio'
+   */
+  providerId?: string;
+  
+  /**
+   * Field name to store the connection context in state.
+   * The context includes: headers (for authenticated requests), 
+   * accountInfo (email, name), and raw credentials (for custom use).
+   * REQUIRED
+   */
+  outputField: string;
+  
+  /**
+   * What to include in the output:
+   * - 'headers': Only auth headers (safest, recommended for most cases)
+   * - 'full': Headers + accountInfo + raw credentials
+   * - 'account': Headers + accountInfo (useful for display)
+   * 
+   * Default: 'headers'
+   */
+  include?: 'headers' | 'full' | 'account';
+  
+  /**
+   * Error handling configuration for this connection step
+   */
+  errorHandling?: ErrorHandlingConfig;
+}
+
+/**
+ * Universal Step - One of the step types
  * 
  * Each step executes sequentially and can read state from previous steps.
  * Steps accumulate state changes that are merged at the end of node execution.
@@ -359,7 +413,7 @@ export interface UniversalStep {
   type: StepType;
   
   /** Configuration for the step (type depends on step type) */
-  config: NeuronStepConfig | ToolStepConfig | TransformStepConfig | ConditionalStepConfig | LoopStepConfig;
+  config: NeuronStepConfig | ToolStepConfig | TransformStepConfig | ConditionalStepConfig | LoopStepConfig | ConnectionStepConfig;
 
   /**
    * Optional condition to determine if this step should run.

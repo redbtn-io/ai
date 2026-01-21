@@ -11,7 +11,7 @@ import type { MessageQueue } from '../memory/queue';
 
 export interface StdioServerConfig {
   name: string;
-  scriptPath: string;  // Relative to ai/src/lib/mcp/servers/
+  scriptPath: string;  // Relative to redbtn/src/lib/mcp/servers/
   enabled?: boolean;
 }
 
@@ -25,12 +25,12 @@ export class StdioServerPool {
     
     // Default configuration for internal servers
     // Paths are relative to the process working directory (where the app is running)
-    // In production: node_modules/@redbtn/ai/dist/lib/mcp/servers/
-    // In development: ai/src/lib/mcp/servers/
+    // In production: node_modules/@redbtn/redbtn/dist/lib/mcp/servers/
+    // In development: redbtn/src/lib/mcp/servers/
     const ext = __filename.endsWith('.js') ? '.js' : '.ts';
     const basePath = ext === '.js' 
-      ? 'node_modules/@redbtn/ai/dist/lib/mcp/servers'
-      : 'ai/src/lib/mcp/servers';
+      ? 'node_modules/@redbtn/redbtn/dist/lib/mcp/servers'
+      : 'redbtn/src/lib/mcp/servers';
     
     this.serverConfigs = configs || [
       { name: 'web', scriptPath: `${basePath}/web-stdio${ext}`, enabled: true },
