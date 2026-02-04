@@ -86,6 +86,7 @@ export interface IMessage {
     };
     toolCalls?: string[];
     source?: any;
+    runId?: string;
   };
 }
 
@@ -169,6 +170,7 @@ const MessageSchema = new Schema<MessageDocument>(
       },
       toolCalls: [String],
       source: Schema.Types.Mixed,
+      runId: String,
     },
   },
   {
