@@ -15,13 +15,21 @@ import type { LogEntry } from './types';
  * - Automatic flush on shutdown
  */
 export class PersistentLogger extends Logger {
-  private db = getDatabase();
+  private _db: ReturnType<typeof getDatabase> | null = null;
   private logQueue: StoredLog[] = [];
   private generationQueue: Map<string, DBGeneration> = new Map();
   private flushInterval: NodeJS.Timeout | null = null;
   private readonly FLUSH_INTERVAL_MS = 5000; // 5 seconds
   private readonly MAX_BATCH_SIZE = 100;
   private nodeId: string;
+
+  // Lazy getter to avoid initializing database at import time
+  private get db() {
+    if (!this._db) {
+      this._db = getDatabase();
+    }
+    return this._db;
+  }
 
   constructor(redis: Redis, nodeId: string = 'default') {
     super(redis);
