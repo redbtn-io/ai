@@ -65,29 +65,52 @@ class DatabaseManager {
       return this.connectionPromise;
     }
 
-    // Already connected - use existing connection regardless of URL
-    // This allows webapp and redbtn to share the same mongoose connection
-    if (mongoose.connection.readyState === 1) {
+    // mongoose.connection.readyState:
+    // 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
+    const readyState = mongoose.connection.readyState;
+
+    // Already connected - reuse existing connection
+    if (readyState === 1) {
       this.isConnected = true;
       console.error('[Database] Reusing existing MongoDB connection');
       return;
+    }
+
+    // Already connecting - wait for existing connection to complete
+    if (readyState === 2) {
+      console.error('[Database] Waiting for existing MongoDB connection...');
+      this.connectionPromise = new Promise<void>((resolve, reject) => {
+        mongoose.connection.once('connected', () => {
+          this.isConnected = true;
+          console.error('[Database] Reusing MongoDB connection (was connecting)');
+          resolve();
+        });
+        mongoose.connection.once('error', (err) => {
+          this.connectionPromise = null;
+          reject(err);
+        });
+      });
+      return this.connectionPromise;
     }
 
     this.connectionPromise = (async () => {
       try {
         // Use stderr for logging in MCP stdio context (stdout is reserved for JSON-RPC)
         console.error('[Database] Connecting to MongoDB via Mongoose...');
-        
+
         await mongoose.connect(this.mongoUrl, {
           serverSelectionTimeoutMS: 5000,
           connectTimeoutMS: 10000,
         });
-        
+
         this.isConnected = true;
         console.error('[Database] Connected to MongoDB successfully');
       } catch (error) {
         console.error('[Database] Failed to connect to MongoDB:', error);
-        console.error('[Database] Connection string:', this.mongoUrl.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@'));
+        console.error(
+          '[Database] Connection string:',
+          this.mongoUrl.replace(/\/\/([^:]+):([^@]+)@/, '//$1:****@')
+        );
         this.connectionPromise = null;
         throw error;
       }
