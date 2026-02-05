@@ -11,11 +11,11 @@ import { fetchAndParse } from '../../utils/scraper';
 import { chunkText, findRelevantChunks } from '../../utils/embeddings';
 
 // Configuration
-const MAX_SCRAPE_URLS = 7;           // Scrape top N results
-const CHUNK_SIZE = 350;              // Chars per chunk for embedding
+const MAX_SCRAPE_URLS = 3;           // Scrape top N results (reduced for speed)
+const CHUNK_SIZE = 500;              // Chars per chunk for embedding (larger = fewer chunks)
 const CHUNK_OVERLAP = 50;            // Overlap between chunks
-const TOP_K_CHUNKS = 15;             // Return top K most relevant chunks
-const MAX_TOTAL_CONTENT = 12000;     // Max total chars for final output
+const TOP_K_CHUNKS = 8;              // Return top K most relevant chunks
+const MAX_TOTAL_CONTENT = 10000;     // Max total chars for final output
 const USE_VECTOR_SEARCH = true;      // Use vector similarity (false = keyword fallback)
 
 class WebServerStdio extends McpServerStdio {

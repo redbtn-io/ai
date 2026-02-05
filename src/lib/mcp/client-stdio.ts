@@ -185,11 +185,12 @@ export class McpClientStdio {
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
       
-      // Set timeout for request
+      // Set timeout for request - 90s for tools/call (web scraping can be slow), 30s for others
+      const timeoutMs = method === 'tools/call' ? 90000 : 30000;
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(new Error(`Request timeout: ${method}`));
-      }, 30000);
+      }, timeoutMs);
 
       // Clear timeout when resolved
       const originalResolve = resolve;

@@ -5,11 +5,18 @@
 
 export async function fetchAndParse(url: string): Promise<{ title: string; content: string; text: string; contentLength: number; error?: string }> {
   try {
+    // Add timeout with AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s per URL
+    
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; RedBot/1.0; +http://redbtn.io)'
-      }
+      },
+      signal: controller.signal
     });
+    
+    clearTimeout(timeoutId);
     
     if (!response.ok) {
       throw new Error(`Failed to fetch ${url}: ${response.statusText}`);

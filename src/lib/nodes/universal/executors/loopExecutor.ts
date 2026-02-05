@@ -104,6 +104,12 @@ export async function executeLoop(
   config: LoopStepConfig,
   state: any
 ): Promise<Partial<any>> {
+  console.log('[LoopExecutor] ====== STARTING LOOP ======');
+  console.log('[LoopExecutor] MaxIterations:', config.maxIterations);
+  console.log('[LoopExecutor] ExitCondition:', config.exitCondition);
+  console.log('[LoopExecutor] Steps count:', config.steps?.length);
+  console.log('[LoopExecutor] OnMaxIterations:', config.onMaxIterations);
+  
   const {
     exitCondition,
     accumulatorField,
@@ -137,7 +143,7 @@ export async function executeLoop(
   while (iteration < maxIterations && !exitConditionMet) {
     iteration++;
     
-    if (DEBUG) console.log(`[LoopExecutor] --- Iteration ${iteration}/${maxIterations} ---`);
+    console.log(`[LoopExecutor] ====== ITERATION ${iteration}/${maxIterations} ======`);
     
     // Execute all steps in this iteration
     for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {

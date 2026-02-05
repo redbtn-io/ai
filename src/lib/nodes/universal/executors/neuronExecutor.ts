@@ -19,8 +19,62 @@ import { executeWithErrorHandling } from './errorHandler';
 // Debug logging - set to true to enable verbose logs
 const DEBUG = false;
 
-// Timeout for stream to start (90 seconds)
-const STREAM_START_TIMEOUT = 90000;
+// Timeout for stream to start (180 seconds - longer for local models with large context)
+const STREAM_START_TIMEOUT = 180000;
+
+/**
+ * Normalize messages to ensure valid LLM conversation format.
+ * 
+ * Issues this fixes:
+ * 1. Consecutive same-role messages (user, user) - merges them
+ * 2. Multiple system messages - merges all into the first system message
+ * 3. System messages not at the start - moves their content to the first system
+ * 
+ * Many LLM APIs (including Ollama) hang or error with these malformed inputs.
+ */
+function normalizeMessages(messages: Array<{ role: string; content: string }>): Array<{ role: string; content: string }> {
+  if (!messages || messages.length === 0) return messages;
+  
+  // First pass: collect all system message content
+  let systemContent = '';
+  const nonSystemMessages: Array<{ role: string; content: string }> = [];
+  
+  for (const msg of messages) {
+    if (msg.role === 'system') {
+      if (systemContent) {
+        systemContent += '\n\n' + msg.content;
+        console.log('[NeuronExecutor] Merged additional system message into first');
+      } else {
+        systemContent = msg.content;
+      }
+    } else {
+      nonSystemMessages.push({ ...msg });
+    }
+  }
+  
+  // Second pass: merge consecutive same-role messages
+  const normalized: Array<{ role: string; content: string }> = [];
+  
+  // Add consolidated system message first
+  if (systemContent) {
+    normalized.push({ role: 'system', content: systemContent });
+  }
+  
+  // Add non-system messages, merging consecutive same roles
+  for (const msg of nonSystemMessages) {
+    const lastMsg = normalized[normalized.length - 1];
+    
+    // If same role as previous, merge content
+    if (lastMsg && lastMsg.role === msg.role) {
+      lastMsg.content = `${lastMsg.content}\n\n${msg.content}`;
+      console.log(`[NeuronExecutor] Merged consecutive ${msg.role} messages`);
+    } else {
+      normalized.push({ ...msg });
+    }
+  }
+  
+  return normalized;
+}
 
 /**
  * Resolve a config value that might be a template string like "{{parameters.temperature}}"
@@ -70,7 +124,7 @@ export async function executeNeuron(
 ): Promise<Partial<any>> {
   // If error handling configured, wrap execution
   if (config.errorHandling) {
-    return executeWithErrorHandling(
+    const result = await executeWithErrorHandling(
       () => executeNeuronInternal(config, state),
       config.errorHandling,
       { 
@@ -78,6 +132,26 @@ export async function executeNeuron(
         field: config.outputField 
       }
     );
+    
+    // If fallback was used, the result will be the raw fallback value (e.g., a string)
+    // We need to wrap it in the expected format: { [outputField]: value }
+    // Check if result is already in the correct format (has outputField as a key)
+    if (result && typeof result === 'object' && config.outputField in result) {
+      // Already in correct format (normal execution succeeded)
+      return result;
+    } else if (result !== undefined) {
+      // Fallback was used - wrap the raw value in the expected format
+      const resultStr = typeof result === 'string' ? result : String(result);
+      console.log('[NeuronExecutor] Wrapping fallback value in outputField format:', {
+        outputField: config.outputField,
+        fallbackType: typeof result,
+        fallbackPreview: resultStr.substring(0, 50)
+      });
+      return {
+        [config.outputField]: result
+      };
+    }
+    return result;
   }
   
   // Otherwise execute directly
@@ -102,6 +176,18 @@ async function executeNeuronInternal(
   config: NeuronStepConfig,
   state: any
 ): Promise<Partial<any>> {
+  console.log('[NeuronExecutor] ====== STARTING NEURON EXECUTION ======');
+  console.log('[NeuronExecutor] config:', {
+    neuronId: config.neuronId,
+    outputField: config.outputField,
+    hasSystemPrompt: !!config.systemPrompt,
+    userPromptPreview: config.userPrompt?.substring(0, 100),
+    hasStructuredOutput: !!config.structuredOutput,
+    stream: config.stream,
+    temperature: config.temperature,
+    maxTokens: config.maxTokens
+  });
+  
   try {
     // Get neuron registry from state
     const neuronRegistry = state.neuronRegistry;
@@ -181,6 +267,8 @@ async function executeNeuronInternal(
     if (messagesFieldMatch) {
       // User prompt is a direct reference to a messages field (e.g., {{state.messages}})
       const fieldName = messagesFieldMatch[1];
+      console.log('[NeuronExecutor] ====== MESSAGES FIELD MODE ======');
+      console.log('[NeuronExecutor] Field name:', fieldName);
       const messagesArray = getNestedProperty(state, fieldName);
       
       // Debug: log what we got
@@ -314,20 +402,37 @@ async function executeNeuronInternal(
       // Always use streaming internally for 10-20% performance improvement
       // The streamToUser flag controls whether chunks reach the client
       
-      // Debug: Log message payload info before streaming
-      const totalChars = messages.reduce((sum: number, m: any) => sum + (m.content?.length || 0), 0);
-      console.log('[NeuronExecutor] Starting stream from model...', {
-        messageCount: messages.length,
-        totalChars,
+      console.log('[NeuronExecutor] ====== ENTERING STREAMING PATH ======');
+      
+      // DEBUG: Log RAW messages BEFORE any normalization to find duplication source
+      console.log('[NeuronExecutor] RAW messages BEFORE normalization:', {
+        count: messages.length,
         roles: messages.map((m: any) => m.role),
-        firstMsgPreview: messages[0]?.content?.substring(0, 100),
-        lastMsgPreview: messages[messages.length - 1]?.content?.substring(0, 100)
+        // Show content previews to identify duplicates
+        previews: messages.map((m: any, i: number) => ({
+          idx: i,
+          role: m.role,
+          contentStart: m.content?.substring(0, 80),
+          contentLength: m.content?.length
+        }))
+      });
+      
+      // Normalize messages to prevent consecutive same-role messages (causes Ollama to hang)
+      const normalizedMessages = normalizeMessages(messages);
+      
+      // Debug: Log message payload info before streaming
+      const totalChars = normalizedMessages.reduce((sum: number, m: any) => sum + (m.content?.length || 0), 0);
+      console.log('[NeuronExecutor] AFTER normalization:', {
+        messageCount: normalizedMessages.length,
+        totalChars,
+        roles: normalizedMessages.map((m: any) => m.role),
+        wasNormalized: normalizedMessages.length !== messages.length
       });
       
       const streamStartTime = Date.now();
       
       // Add timeout to stream start to avoid indefinite hangs
-      const streamPromise = model.stream(messages);
+      const streamPromise = model.stream(normalizedMessages);
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new Error(`Stream start timeout after ${STREAM_START_TIMEOUT}ms - model may be overloaded or unreachable`));

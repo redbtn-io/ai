@@ -29,9 +29,9 @@ const log = createLogger('NeuronRegistry');
 
 /**
  * Create a fetch wrapper with timeout for Ollama requests
- * Default timeout: 120 seconds (long enough for complex responses)
+ * Default timeout: 300 seconds (5 minutes - long enough for complex streaming responses)
  */
-function createOllamaFetch(timeoutMs: number = 120000): typeof fetch {
+function createOllamaFetch(timeoutMs: number = 300000): typeof fetch {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -223,10 +223,10 @@ export class NeuronRegistry {
           baseUrl: config.endpoint,
           model: config.model,
           temperature: config.temperature ?? 0.0,
-          numCtx: config.maxTokens,
+          numPredict: config.maxTokens, // Max output tokens (not context window - numCtx forces model reload)
           topP: config.topP,
           keepAlive: -1, // Keep models loaded
-          fetch: createOllamaFetch(120000), // 2 minute timeout with better error messages
+          fetch: createOllamaFetch(300000), // 5 minute timeout for streaming responses
         });
         
       case 'openai':

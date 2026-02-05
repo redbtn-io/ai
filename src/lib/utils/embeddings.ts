@@ -17,21 +17,32 @@ export interface EmbeddedChunk {
  * Get embedding for a single text
  */
 export async function getEmbedding(text: string): Promise<number[]> {
-  const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      prompt: text
-    })
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+  
+  try {
+    const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: EMBEDDING_MODEL,
+        prompt: text
+      }),
+      signal: controller.signal
+    });
 
-  if (!response.ok) {
-    throw new Error(`Embedding failed: ${response.status} ${response.statusText}`);
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Embedding failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json() as { embedding: number[] };
+    return data.embedding;
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw e;
   }
-
-  const data = await response.json() as { embedding: number[] };
-  return data.embedding;
 }
 
 /**

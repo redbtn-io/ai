@@ -25,41 +25,76 @@ export async function executeStep(
   step: UniversalStep,
   state: any
 ): Promise<Partial<any>> {
+  console.log(`[StepExecutor] ====== EXECUTING STEP: ${step.type} ======`);
+  console.log(`[StepExecutor] Step config keys:`, Object.keys(step.config || {}));
+  
   // Check optional condition
   if (step.condition) {
+    console.log(`[StepExecutor] Checking condition: ${step.condition}`);
     const shouldRun = evaluateStepCondition(step.condition, state);
     if (!shouldRun) {
-      // console.log(`[StepExecutor] Skipping step due to condition: ${step.condition}`);
+      console.log(`[StepExecutor] Skipping step due to condition: ${step.condition}`);
       return {}; // Skip execution, return empty update
     }
+    console.log(`[StepExecutor] Condition passed, executing step`);
   }
 
+  console.log(`[StepExecutor] Dispatching to ${step.type} executor...`);
+  const startTime = Date.now();
+  
   switch (step.type) {
-    case 'neuron':
-      return await executeNeuron(step.config as any, state);
+    case 'neuron': {
+      console.log(`[StepExecutor] Calling executeNeuron...`);
+      const result = await executeNeuron(step.config as any, state);
+      console.log(`[StepExecutor] executeNeuron completed in ${Date.now() - startTime}ms, result keys:`, Object.keys(result || {}));
+      return result;
+    }
     
-    case 'tool':
-      return await executeTool(step.config as any, state);
+    case 'tool': {
+      console.log(`[StepExecutor] Calling executeTool...`);
+      const result = await executeTool(step.config as any, state);
+      console.log(`[StepExecutor] executeTool completed in ${Date.now() - startTime}ms, result keys:`, Object.keys(result || {}));
+      return result;
+    }
     
-    case 'transform':
-      return await executeTransform(step.config as any, state);
+    case 'transform': {
+      console.log(`[StepExecutor] Calling executeTransform...`);
+      const result = await executeTransform(step.config as any, state);
+      console.log(`[StepExecutor] executeTransform completed in ${Date.now() - startTime}ms, result keys:`, Object.keys(result || {}));
+      return result;
+    }
     
-    case 'conditional':
-      return executeConditional(step.config as any, state);
+    case 'conditional': {
+      console.log(`[StepExecutor] Calling executeConditional...`);
+      const result = executeConditional(step.config as any, state);
+      console.log(`[StepExecutor] executeConditional completed in ${Date.now() - startTime}ms, result keys:`, Object.keys(result || {}));
+      return result;
+    }
     
-    case 'loop':
-      return await executeLoop(step.config as any, state);
+    case 'loop': {
+      console.log(`[StepExecutor] Calling executeLoop...`);
+      const result = await executeLoop(step.config as any, state);
+      console.log(`[StepExecutor] executeLoop completed in ${Date.now() - startTime}ms, result keys:`, Object.keys(result || {}));
+      return result;
+    }
     
-    case 'connection':
-      return await executeConnection(step.config as any, state);
+    case 'connection': {
+      console.log(`[StepExecutor] Calling executeConnection...`);
+      const result = await executeConnection(step.config as any, state);
+      console.log(`[StepExecutor] executeConnection completed in ${Date.now() - startTime}ms, result keys:`, Object.keys(result || {}));
+      return result;
+    }
     
     case 'delay': {
       const delayMs = (step.config as any)?.ms ?? 1000;
+      console.log(`[StepExecutor] Executing delay: ${delayMs}ms`);
       await new Promise(resolve => setTimeout(resolve, delayMs));
+      console.log(`[StepExecutor] Delay completed`);
       return {};
     }
     
     default:
+      console.log(`[StepExecutor] ERROR: Unknown step type: ${(step as any).type}`);
       throw new Error(`Unknown step type: ${(step as any).type}`);
   }
 }

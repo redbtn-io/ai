@@ -61,6 +61,11 @@ export async function executeTool(
   config: ToolStepConfig,
   state: any
 ): Promise<Partial<any>> {
+  console.log('[ToolExecutor] ====== STARTING TOOL EXECUTION ======');
+  console.log('[ToolExecutor] ToolName:', config.toolName);
+  console.log('[ToolExecutor] OutputField:', config.outputField);
+  console.log('[ToolExecutor] Parameters:', JSON.stringify(config.parameters));
+  
   // Normalize legacy config format
   const normalizedConfig = normalizeToolStepConfig(config);
   

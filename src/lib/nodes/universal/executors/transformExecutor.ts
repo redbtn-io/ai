@@ -31,6 +31,11 @@ export async function executeTransform(
   config: TransformStepConfig,
   state: any
 ): Promise<Partial<any>> {
+  console.log('[TransformExecutor] ====== STARTING TRANSFORM ======');
+  console.log('[TransformExecutor] Operation:', config.operation);
+  console.log('[TransformExecutor] InputField:', config.inputField);
+  console.log('[TransformExecutor] OutputField:', config.outputField);
+  
   try {
     // build-messages doesn't require inputField
     let inputData: any = undefined;

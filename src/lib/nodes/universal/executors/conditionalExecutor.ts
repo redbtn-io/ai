@@ -35,6 +35,12 @@ export function executeConditional(
   config: ConditionalStepConfig,
   state: any
 ): Partial<any> {
+  console.log('[ConditionalExecutor] ====== STARTING CONDITIONAL ======');
+  console.log('[ConditionalExecutor] Condition:', config.condition);
+  console.log('[ConditionalExecutor] SetField:', config.setField);
+  console.log('[ConditionalExecutor] TrueValue:', config.trueValue);
+  console.log('[ConditionalExecutor] FalseValue:', config.falseValue);
+  
   try {
     // Check if condition is a JavaScript expression (wrapped in {{ }})
     let conditionStr: string;

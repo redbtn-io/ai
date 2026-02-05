@@ -78,9 +78,10 @@ function deepMergeData(target: Record<string, any>, source: Record<string, any>)
   const result = { ...target };
   
   for (const key of Object.keys(source)) {
-    if (key === 'messages' && Array.isArray(source[key]) && Array.isArray(result[key])) {
-      // Special handling for messages: concat
-      result[key] = result[key].concat(source[key]);
+    // For messages: REPLACE rather than concat to prevent duplication
+    // Messages are built fresh by context node, not incrementally added
+    if (key === 'messages' && Array.isArray(source[key])) {
+      result[key] = source[key]; // Replace, don't concat
     } else if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
       // Recursively merge nested objects
       result[key] = deepMergeData(result[key] || {}, source[key]);
