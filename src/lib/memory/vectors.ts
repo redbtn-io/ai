@@ -140,8 +140,8 @@ export class VectorStoreManager {
       path: chromaUrl
     });
     
-    console.log(`[VectorStore] Initialized with ChromaDB at ${chromaUrl}`);
-    console.log(`[VectorStore] Using embedding model: ${embeddingModel} via ${ollamaUrl}`);
+    console.error(`[VectorStore] Initialized with ChromaDB at ${chromaUrl}`);
+    console.error(`[VectorStore] Using embedding model: ${embeddingModel} via ${ollamaUrl}`);
   }
 
   /**
@@ -350,7 +350,7 @@ export class VectorStoreManager {
         }
       });
       
-      console.log(`[VectorStore] Using collection: ${collectionName} (cosine similarity)`);
+      console.error(`[VectorStore] Using collection: ${collectionName} (cosine similarity)`);
       return collection;
     } catch (error) {
       console.error(`[VectorStore] Failed to get/create collection ${collectionName}:`, error);
@@ -535,7 +535,7 @@ export class VectorStoreManager {
         ids
       });
 
-      console.log(`[VectorStore] Deleted ${ids.length} documents from ${collectionName}`);
+      console.error(`[VectorStore] Deleted ${ids.length} documents from ${collectionName}`);
       return ids.length;
     } catch (error) {
       console.error('[VectorStore] Failed to delete documents:', error);
@@ -560,7 +560,7 @@ export class VectorStoreManager {
         where: filter
       });
 
-      console.log(`[VectorStore] Deleted documents matching filter from ${collectionName}`);
+      console.error(`[VectorStore] Deleted documents matching filter from ${collectionName}`);
       return 0; // ChromaDB doesn't return count
     } catch (error) {
       console.error('[VectorStore] Failed to delete by filter:', error);
@@ -575,7 +575,7 @@ export class VectorStoreManager {
   async deleteCollection(collectionName: string): Promise<void> {
     try {
       // await this.client.deleteCollection({ name: collectionName });
-      console.log(`[VectorStore] Deleted collection: ${collectionName} (MOCKED)`);
+      console.error(`[VectorStore] Deleted collection: ${collectionName} (MOCKED)`);
     } catch (error) {
       console.error(`[VectorStore] Failed to delete collection ${collectionName}:`, error);
       throw error;
@@ -591,7 +591,7 @@ export class VectorStoreManager {
       // const collections = await this.client.listCollections();
       // const names = collections.map(c => c.name);
       const names: string[] = [];
-      console.log(`[VectorStore] Found ${names.length} collections (MOCKED)`);
+      console.error(`[VectorStore] Found ${names.length} collections (MOCKED)`);
       return names;
     } catch (error) {
       console.error('[VectorStore] Failed to list collections:', error);
@@ -628,7 +628,7 @@ export class VectorStoreManager {
     try {
       // const heartbeat = await this.client.heartbeat();
       const heartbeat = 0;
-      console.log(`[VectorStore] ChromaDB heartbeat: ${heartbeat}ms (MOCKED)`);
+      console.error(`[VectorStore] ChromaDB heartbeat: ${heartbeat}ms (MOCKED)`);
       return true;
     } catch (error) {
       console.error('[VectorStore] Health check failed:', error);
