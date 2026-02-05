@@ -48,3 +48,13 @@ export type {
   NodeParameters,
   ResolvedParameters 
 } from './Node';
+
+// Tool registry for worker-registered tools
+export { ToolRegistry } from './ToolRegistry';
+export type { 
+  IToolRegistry, 
+  IToolServer, 
+  IRegisteredTool, 
+  IToolInputSchema,
+  ToolRegistryDocument 
+} from './ToolRegistry';

@@ -185,6 +185,7 @@ export interface RedConfig {
   chatLlmUrl: string; // URL for the chat LLM (e.g., Ollama on 192.168.1.4:11434)
   workLlmUrl: string; // URL for the worker LLM (e.g., Ollama on 192.168.1.3:11434)
   llmEndpoints?: { [agentName: string]: string }; // Map of named agents to specific LLM endpoint URLs
+  disableMcp?: boolean; // Skip MCP stdio server initialization (for webapp, tools come from DB)
 }
 
 /**
@@ -331,15 +332,19 @@ export class Red {
     this.baseState = { loadedAt: new Date(), nodeId: this.nodeId };
     this.isLoaded = true;
     
-    // Start internal stdio-based MCP servers
-    try {
-      await this.mcpStdioPool.start();
-      const toolsInfo = await this.mcpStdioPool.getAllTools();
-      const totalTools = toolsInfo.reduce((sum, info) => sum + info.tools.length, 0);
-      process.stdout.write(`\r✓ Red AI initialized (${totalTools} MCP tools via stdio)\n`);
-    } catch (error) {
-      console.warn('⚠️ MCP stdio server startup failed:', error);
-      console.warn('  Tool calls may fail. Check server scripts in redbtn/src/lib/mcp/servers/');
+    // Start internal stdio-based MCP servers (unless disabled for webapp mode)
+    if (this.config.disableMcp) {
+      process.stdout.write(`\r✓ Red AI initialized (MCP disabled, tools from DB)\n`);
+    } else {
+      try {
+        await this.mcpStdioPool.start();
+        const toolsInfo = await this.mcpStdioPool.getAllTools();
+        const totalTools = toolsInfo.reduce((sum, info) => sum + info.tools.length, 0);
+        process.stdout.write(`\r✓ Red AI initialized (${totalTools} MCP tools via stdio)\n`);
+      } catch (error) {
+        console.warn('⚠️ MCP stdio server startup failed:', error);
+        console.warn('  Tool calls may fail. Check server scripts in redbtn/src/lib/mcp/servers/');
+      }
     }
     
     // Start heartbeat to register node as active
@@ -753,6 +758,102 @@ export class Red {
       sources,
       count: allTools.length,
     };
+  }
+
+  /**
+   * Get all available tools from the database (for webapp mode with MCP disabled)
+   * Workers register their tools on startup, webapp queries the DB
+   * @param userId Optional user ID to include their custom tools
+   */
+  public async getToolsFromRegistry(userId?: string): Promise<{
+    tools: ToolWithSource[];
+    toolsByServer: Array<{ server: string; source: 'global' | 'custom'; connectionId?: string; tools: ToolWithSource[] }>;
+    sources: { global: string[]; custom: string[] };
+    count: number;
+  }> {
+    const { ToolRegistry } = await import('./lib/models/ToolRegistry');
+    const result = await ToolRegistry.getActiveTools(userId);
+    
+    // Default input schema for tools that don't have one
+    const defaultInputSchema = { type: 'object' as const, properties: {} };
+    
+    const tools: ToolWithSource[] = result.tools.map(t => ({
+      name: t.name,
+      description: t.description || '',
+      inputSchema: (t.inputSchema as ToolWithSource['inputSchema']) || defaultInputSchema,
+      source: t.source as 'global' | 'custom',
+      serverName: t.serverName,
+      connectionId: t.connectionId,
+    }));
+    
+    const toolsByServer = result.toolsByServer.map(s => ({
+      server: s.serverName,
+      source: s.source,
+      connectionId: s.connectionId,
+      tools: s.tools.map(t => ({
+        name: t.name,
+        description: t.description || '',
+        inputSchema: (t.inputSchema as ToolWithSource['inputSchema']) || defaultInputSchema,
+        source: s.source,
+        serverName: s.serverName,
+        connectionId: s.connectionId,
+      })) as ToolWithSource[],
+    }));
+    
+    const sources = {
+      global: toolsByServer.filter(s => s.source === 'global').map(s => s.server),
+      custom: toolsByServer.filter(s => s.source === 'custom').map(s => s.server),
+    };
+    
+    return { tools, toolsByServer, sources, count: tools.length };
+  }
+
+  /**
+   * Register tools to the database (for worker nodes)
+   * Call this after MCP servers are initialized to make tools discoverable by webapp
+   */
+  public async registerToolsToDb(): Promise<void> {
+    if (!this.nodeId) {
+      throw new Error('Node must be loaded before registering tools');
+    }
+    
+    const { ToolRegistry } = await import('./lib/models/ToolRegistry');
+    
+    // Get all tools from stdio pool
+    const stdioTools = await this.mcpStdioPool.getAllTools();
+    
+    const servers = stdioTools.map(({ server, tools }) => ({
+      serverName: server,
+      source: 'global' as const,
+      tools: tools.map(t => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+      })),
+    }));
+    
+    await ToolRegistry.registerTools(this.nodeId, servers);
+    console.log(`[Red] Registered ${servers.reduce((sum, s) => sum + s.tools.length, 0)} tools to database`);
+  }
+
+  /**
+   * Update tool registry heartbeat (call periodically to keep registration active)
+   */
+  public async heartbeatToolRegistry(): Promise<void> {
+    if (!this.nodeId) return;
+    
+    const { ToolRegistry } = await import('./lib/models/ToolRegistry');
+    await ToolRegistry.heartbeat(this.nodeId);
+  }
+
+  /**
+   * Deactivate tool registration (call on shutdown)
+   */
+  public async deactivateToolRegistry(): Promise<void> {
+    if (!this.nodeId) return;
+    
+    const { ToolRegistry } = await import('./lib/models/ToolRegistry');
+    await ToolRegistry.deactivate(this.nodeId);
   }
 
 }
