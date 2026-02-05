@@ -310,18 +310,27 @@ async function executeNeuronInternal(
       // Stream from LangChain model for standard text responses
       // Always use streaming internally for 10-20% performance improvement
       // The streamToUser flag controls whether chunks reach the client
+      console.log('[NeuronExecutor] Starting stream from model...');
+      const streamStartTime = Date.now();
       const stream = await model.stream(messages);
+      console.log(`[NeuronExecutor] Stream started after ${Date.now() - streamStartTime}ms`);
       
       response = '';
+      let chunkCount = 0;
       
       // Accumulate chunks
       for await (const chunk of stream) {
+        chunkCount++;
+        if (chunkCount === 1) {
+          console.log(`[NeuronExecutor] First chunk received after ${Date.now() - streamStartTime}ms`);
+        }
         if (chunk.content) {
           response += chunk.content;
           // Note: Whether chunks reach the user is decided by respond.ts
           // based on state._currentStepStreamToUser flag
         }
       }
+      console.log(`[NeuronExecutor] Stream complete: ${chunkCount} chunks, ${response.length} chars, ${Date.now() - streamStartTime}ms`);
     }
     
     // Clear the flag after streaming completes
