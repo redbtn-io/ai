@@ -65,9 +65,11 @@ class DatabaseManager {
       return this.connectionPromise;
     }
 
-    // Already connected
+    // Already connected - use existing connection regardless of URL
+    // This allows webapp and redbtn to share the same mongoose connection
     if (mongoose.connection.readyState === 1) {
       this.isConnected = true;
+      console.error('[Database] Reusing existing MongoDB connection');
       return;
     }
 
