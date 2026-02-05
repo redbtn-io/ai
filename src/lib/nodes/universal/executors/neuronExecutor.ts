@@ -19,6 +19,9 @@ import { executeWithErrorHandling } from './errorHandler';
 // Debug logging - set to true to enable verbose logs
 const DEBUG = false;
 
+// Timeout for stream to start (90 seconds)
+const STREAM_START_TIMEOUT = 90000;
+
 /**
  * Resolve a config value that might be a template string like "{{parameters.temperature}}"
  * Returns the resolved value (as number if it was a parameter reference) or the original value
@@ -310,9 +313,28 @@ async function executeNeuronInternal(
       // Stream from LangChain model for standard text responses
       // Always use streaming internally for 10-20% performance improvement
       // The streamToUser flag controls whether chunks reach the client
-      console.log('[NeuronExecutor] Starting stream from model...');
+      
+      // Debug: Log message payload info before streaming
+      const totalChars = messages.reduce((sum: number, m: any) => sum + (m.content?.length || 0), 0);
+      console.log('[NeuronExecutor] Starting stream from model...', {
+        messageCount: messages.length,
+        totalChars,
+        roles: messages.map((m: any) => m.role),
+        firstMsgPreview: messages[0]?.content?.substring(0, 100),
+        lastMsgPreview: messages[messages.length - 1]?.content?.substring(0, 100)
+      });
+      
       const streamStartTime = Date.now();
-      const stream = await model.stream(messages);
+      
+      // Add timeout to stream start to avoid indefinite hangs
+      const streamPromise = model.stream(messages);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Stream start timeout after ${STREAM_START_TIMEOUT}ms - model may be overloaded or unreachable`));
+        }, STREAM_START_TIMEOUT);
+      });
+      
+      const stream = await Promise.race([streamPromise, timeoutPromise]);
       console.log(`[NeuronExecutor] Stream started after ${Date.now() - streamStartTime}ms`);
       
       response = '';
