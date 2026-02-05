@@ -28,6 +28,36 @@ import type { RedConfig } from "../../index";
 const log = createLogger('NeuronRegistry');
 
 /**
+ * Create a fetch wrapper with timeout for Ollama requests
+ * Default timeout: 120 seconds (long enough for complex responses)
+ */
+function createOllamaFetch(timeoutMs: number = 120000): typeof fetch {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
+      return response;
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          throw new Error(`Ollama request timed out after ${timeoutMs}ms`);
+        }
+        // Add more context to fetch errors
+        throw new Error(`Ollama fetch failed: ${error.message} (endpoint: ${input})`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+}
+
+/**
  * Custom error classes for neuron operations
  */
 export class NeuronNotFoundError extends Error {
@@ -195,7 +225,8 @@ export class NeuronRegistry {
           temperature: config.temperature ?? 0.0,
           numCtx: config.maxTokens,
           topP: config.topP,
-          keepAlive: -1 // Keep models loaded
+          keepAlive: -1, // Keep models loaded
+          fetch: createOllamaFetch(120000), // 2 minute timeout with better error messages
         });
         
       case 'openai':
