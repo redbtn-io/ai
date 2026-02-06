@@ -83,10 +83,11 @@ export class MemoryManager {
 
   /**
    * Get conversation context: returns messages that fit within token limit.
+   * Always reads from MongoDB for accuracy (Redis cache may be stale/empty).
    * Use getContextSummary() separately to retrieve summary for merging with system prompts.
    */
   async getContextForConversation(conversationId: string): Promise<ConversationMessage[]> {
-    const messages = await this.getMessages(conversationId);
+    const messages = await this.getAllMessagesFromDB(conversationId);
     
     // Calculate tokens and return messages that fit within limit
     let totalTokens = 0;

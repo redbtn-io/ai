@@ -331,18 +331,12 @@ export class ContextServer extends McpServer {
     try {
       let messages: ConversationMessage[];
 
-      // Fetch based on source
-      if (source === 'database') {
-        messages = await this.memoryManager.getAllMessagesFromDB(conversationId);
-      } else if (source === 'cache') {
+      // Fetch based on source - default to database for accuracy
+      if (source === 'cache') {
         messages = await this.memoryManager.getMessages(conversationId);
       } else {
-        // Auto: try cache first, fall back to database
-        messages = await this.memoryManager.getMessages(conversationId);
-        
-        if (messages.length === 0) {
-          messages = await this.memoryManager.getAllMessagesFromDB(conversationId);
-        }
+        // Both 'database' and 'auto' use MongoDB directly for accuracy
+        messages = await this.memoryManager.getAllMessagesFromDB(conversationId);
       }
 
       // Apply time filters if provided

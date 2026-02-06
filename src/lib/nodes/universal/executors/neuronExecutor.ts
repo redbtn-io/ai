@@ -344,6 +344,9 @@ async function executeNeuronInternal(
       messages.push({ role: 'user', content: userPrompt });
     }
     
+    // Normalize messages before sending to LLM
+    messages = normalizeMessages(messages);
+    
     // Check if this step should stream to user
     const streamToUser = config.stream === true;
     
