@@ -21,7 +21,7 @@ import Thought, { IThought } from '../models/Thought';
 
 export type { IMessage as StoredMessage } from '../models/Message';
 export type { IToolStep as StoredToolStep, IToolExecution as StoredToolExecution, INodeProgress as StoredNodeProgress, IGraphRun as StoredGraphRun } from '../models/Message';
-export type { IConversation as Conversation } from '../models/Conversation';
+export type { IConversation as Conversation, ConversationSource } from '../models/Conversation';
 export type { ILog as StoredLog } from '../models/Log';
 export type { IGeneration as Generation } from '../models/Generation';
 export type { IThought as StoredThought } from '../models/Thought';
@@ -135,7 +135,7 @@ class DatabaseManager {
   /**
    * Store a message in the database
    */
-  async storeMessage(message: IMessage, userId?: string): Promise<ObjectId> {
+  async storeMessage(message: IMessage, userId?: string, source?: string): Promise<ObjectId> {
     await this.ensureConnected();
     
     console.log(`[Database] storeMessage called - messageId:${message.messageId}, role:${message.role}, userId:${userId}`);
@@ -150,10 +150,15 @@ class DatabaseManager {
         $inc: { 'metadata.messageCount': 1 },
       };
       
+      const setOnInsert: any = { conversationId: message.conversationId };
       if (userId) {
-        updateDoc.$setOnInsert = { userId, conversationId: message.conversationId };
+        setOnInsert.userId = userId;
         console.log(`[Database] Setting userId=${userId} for conversation ${message.conversationId} (upsert)`);
       }
+      if (source) {
+        setOnInsert.source = source;
+      }
+      updateDoc.$setOnInsert = setOnInsert;
       
       await Conversation.updateOne(
         { conversationId: message.conversationId },
@@ -277,9 +282,13 @@ class DatabaseManager {
   /**
    * Get all conversations for a user (sorted by most recent)
    */
-  async getConversations(userId: string, limit: number = 50, skip: number = 0): Promise<IConversation[]> {
+  async getConversations(userId: string, limit: number = 50, skip: number = 0, source?: string): Promise<IConversation[]> {
     await this.ensureConnected();
-    return await Conversation.find({ userId })
+    const query: any = { userId };
+    if (source) {
+      query.source = source;
+    }
+    return await Conversation.find(query)
       .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(limit)

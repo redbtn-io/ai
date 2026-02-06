@@ -8,12 +8,18 @@
 import mongoose, { Schema, Model, Document } from 'mongoose';
 
 /**
+ * Conversation source types
+ */
+export type ConversationSource = 'chat' | 'terminal' | 'api';
+
+/**
  * Conversation document interface
  */
 export interface IConversation {
   conversationId: string;
   title?: string;
   userId?: string;
+  source?: ConversationSource;
   createdAt?: Date;
   updatedAt?: Date;
   metadata?: {
@@ -29,6 +35,7 @@ const ConversationSchema = new Schema<ConversationDocument>(
     conversationId: { type: String, required: true, unique: true, index: true },
     title: String,
     userId: { type: String, index: true },
+    source: { type: String, enum: ['chat', 'terminal', 'api'], default: 'chat', index: true },
     metadata: {
       application: String,
       messageCount: { type: Number, default: 0 },
