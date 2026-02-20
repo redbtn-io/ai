@@ -1,14 +1,14 @@
 /**
  * Graph Compiler
  * 
- * Phase 1: Dynamic Graph System
  * Compiles graph configurations into LangGraph StateGraph instances.
  * Uses JIT (Just-In-Time) compilation with validation.
+ * All nodes run through universalNode — config is loaded from MongoDB by nodeId.
  */
 
 import { StateGraph, END } from "@langchain/langgraph";
 import { GraphConfig, GraphEdgeConfig, CompiledGraph } from '../types/graph';
-import { NODE_REGISTRY, isValidNodeType, NodeFunction } from './nodeRegistry';
+import { universalNode, type NodeFunction } from './nodeRegistry';
 import { createConditionFunction } from './conditionEvaluator';
 
 // Import RedGraphState from the static graph file
@@ -18,31 +18,27 @@ import { RedGraphState } from './state';
  * Creates a configurable node wrapper that injects config into the state
  * This allows nodes to access custom configuration from GraphNodeConfig
  * 
- * @param nodeFn The node function to wrap
  * @param graphNodeId The graph node ID (e.g., "context-1768684860197-u6xweb") - used for event publishing
- * @param nodeType The node type (e.g., "context", "universal") - used for registry lookup
  * @param config Optional additional configuration for the node
  */
 function createConfigurableNode(
-  nodeFn: NodeFunction,
   graphNodeId: string,
-  nodeType: string,
   config: Record<string, any> = {}
 ): NodeFunction {
   return async (state: any) => {
     // Inject node config into state so the node can access it
     // - graphNodeId: Used for event publishing (the unique node instance in this graph)
-    // - nodeId: Used for registry lookup (either explicit config.nodeId or the node type)
+    // - nodeId: Used for registry lookup (explicit config.nodeId or falls back to graphNodeId)
     const enhancedState = {
       ...state,
       nodeConfig: {
         ...config,
-        graphNodeId,  // The graph-specific node ID for event publishing
-        nodeId: config.nodeId || nodeType  // Registry lookup: explicit nodeId or fall back to node type
+        graphNodeId,
+        nodeId: config.nodeId || graphNodeId
       }
     };
     
-    return await nodeFn(enhancedState);
+    return await universalNode(enhancedState);
   };
 }
 
@@ -65,31 +61,18 @@ export function compileGraphFromConfig(config: GraphConfig): CompiledGraph {
   
   // Step 3: Add all nodes to the graph
   for (const node of config.nodes) {
-    const nodeFn = NODE_REGISTRY[node.type];
-    if (!nodeFn) {
-      throw new GraphCompilationError(
-        `Unknown node type: ${node.type} (node: ${node.id})`,
-        config.graphId
-      );
-    }
+    console.log(`[GraphCompiler]   Adding node: ${node.id} (nodeId: ${node.config?.nodeId || node.id})`);
     
-    console.log(`[GraphCompiler]   Adding node: ${node.id} (type: ${node.type})`);
-    
-    // Always wrap node function to inject nodeId, nodeType, and config
-    // This ensures events are published with the correct graph node ID
-    // and the universal node can look up config by node type or explicit nodeId
-    const wrappedFn = createConfigurableNode(nodeFn, node.id, node.type, node.config || {});
+    // Wrap universalNode to inject nodeId and config
+    const wrappedFn = createConfigurableNode(node.id, node.config || {});
     
     builder.addNode(node.id, wrappedFn);
   }
 
   // Step 3.5: Add global error handler node (if not already present)
-  // This ensures the graph always has a fallback for unhandled errors
   if (!config.nodes.some(n => n.id === 'error_handler')) {
     console.log(`[GraphCompiler]   Adding system node: error_handler`);
-    const universalFn = NODE_REGISTRY['universal'];
-    // Create a virtual node config that points to the registry entry (error_handler node type)
-    const errorHandlerFn = createConfigurableNode(universalFn, 'error_handler', 'universal', {});
+    const errorHandlerFn = createConfigurableNode('error_handler', {});
     builder.addNode('error_handler', errorHandlerFn);
   }
   
@@ -135,10 +118,10 @@ function validateGraphConfig(config: GraphConfig): void {
     errors.push('Graph must have at least one edge');
   }
   
-  // Check all node types are valid
+  // Validate nodes have config.nodeId (required for loading from MongoDB)
   for (const node of config.nodes || []) {
-    if (!isValidNodeType(node.type)) {
-      errors.push(`Invalid node type: ${node.type} (node: ${node.id})`);
+    if (!node.config?.nodeId && !node.id) {
+      errors.push(`Node is missing both config.nodeId and id: ${JSON.stringify(node)}`);
     }
   }
   

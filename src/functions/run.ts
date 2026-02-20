@@ -17,19 +17,19 @@ import type { Redis } from 'ioredis';
 import type { Red } from '../index';
 import { SYSTEM_TEMPLATES } from '../lib/types/graph';
 import {
-  RunPublisher,
-  RunLock,
-  type RunState,
-  createRunPublisher,
+    RunPublisher,
+    RunLock,
+    type RunState,
+    createRunPublisher,
 } from '../lib/run';
 
 // =============================================================================
 // Types
 // =============================================================================
 
-import type { 
-  UserConnection, 
-  ConnectionProvider,
+import type {
+    UserConnection,
+    ConnectionProvider,
 } from '../lib/connections';
 
 import { ConnectionManager } from '../lib/connections';
@@ -344,7 +344,6 @@ CRITICAL RULES:
     neuronRegistry: red.neuronRegistry,
     memory: red.memory,
     messageQueue: red.messageQueue, // Legacy - will be removed in Phase 3
-    logger: red.logger,
     mcpClient: {
       callTool: (
         toolName: string,
@@ -794,12 +793,12 @@ export async function run(
 
   console.log(`[run] Acquired lock for conversation ${lockKey}`);
 
-  // 5. Create RunPublisher with logger for MongoDB persistence
+  // 5. Create RunPublisher for unified event publishing
   const publisher = createRunPublisher({
     redis,
     runId,
     userId,
-    logger: red.logger,
+    log: red.log,
   });
 
   // 6. Initialize run

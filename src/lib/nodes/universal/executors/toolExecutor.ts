@@ -103,8 +103,6 @@ async function executeToolInternal(
   config: ToolStepConfig,
   state: any
 ): Promise<Partial<any>> {
-    const logger = state.logger;
-    
     // Validate required fields
     if (!config.toolName) {
       throw new Error('Tool step missing required field: toolName');
@@ -238,9 +236,13 @@ async function executeToolInternal(
         
         // Emit tool_complete event
         if (runPublisher) {
+          const resultLength = typeof serializedResult === 'string' 
+            ? serializedResult.length 
+            : JSON.stringify(serializedResult).length;
           await runPublisher.toolComplete(toolId, serializedResult, {
             outputField: config.outputField,
-            attempts: attempt + 1
+            attempts: attempt + 1,
+            resultLength,
           });
         }
         

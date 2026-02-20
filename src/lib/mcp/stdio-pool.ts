@@ -7,7 +7,9 @@
  */
 
 import { McpClientStdio } from './client-stdio';
+import type { StdioLogNotification } from './server-stdio';
 import type { MessageQueue } from '../memory/queue';
+import type { RedLog } from '@redbtn/redlog';
 
 export interface StdioServerConfig {
   name: string;
@@ -19,9 +21,11 @@ export class StdioServerPool {
   private clients: Map<string, McpClientStdio> = new Map();
   private serverConfigs: StdioServerConfig[];
   private messageQueue?: MessageQueue;
+  private redlog?: RedLog;
 
-  constructor(configs?: StdioServerConfig[], messageQueue?: MessageQueue) {
+  constructor(configs?: StdioServerConfig[], messageQueue?: MessageQueue, redlog?: RedLog) {
     this.messageQueue = messageQueue;
+    this.redlog = redlog;
     
     // Default configuration for internal servers
     // Paths are relative to the process working directory (where the app is running)
@@ -48,6 +52,40 @@ export class StdioServerPool {
   }
 
   /**
+   * Set the RedLog instance for forwarding child process logs.
+   * If set after start(), re-wires existing clients.
+   */
+  setRedLog(redlog: RedLog): void {
+    this.redlog = redlog;
+    // Re-wire existing clients
+    for (const [, client] of this.clients) {
+      client.onLog(this.handleChildLog.bind(this));
+    }
+  }
+
+  /**
+   * Forward a child process log notification to RedLog.
+   * Called by McpClientStdio when it receives a notifications/log JSON-RPC notification.
+   */
+  private handleChildLog(serverName: string, log: StdioLogNotification): void {
+    if (!this.redlog) return;
+
+    this.redlog.log({
+      level: log.level,
+      message: log.message,
+      category: log.category || 'mcp',
+      scope: log.scope,
+      metadata: {
+        ...log.metadata,
+        mcpServer: serverName,
+        source: 'stdio-child',
+      },
+    }).catch(() => {
+      // Swallow — best-effort logging should never crash the parent
+    });
+  }
+
+  /**
    * Start all stdio servers as child processes
    */
   async start(): Promise<void> {
@@ -64,7 +102,12 @@ export class StdioServerPool {
           console.log(`[MCP Stdio Pool] Starting ${config.name} at: ${scriptPath}`);
           
           // Create stdio client (will spawn the process)
-          const client = new McpClientStdio(`${runtime}:${scriptPath}`);
+          const client = new McpClientStdio(`${runtime}:${scriptPath}`, config.name);
+          
+          // Wire up log forwarding: child process → RedLog
+          if (this.redlog) {
+            client.onLog(this.handleChildLog.bind(this));
+          }
           
           // Connect (spawns child process and waits for initialization)
           await client.connect();

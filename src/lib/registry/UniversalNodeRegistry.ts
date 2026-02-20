@@ -9,12 +9,12 @@
  * 2. Falls back to system node
  */
 
-import { getUniversalNodeConfig, listSystemUniversalNodes, getNodeConfigForUser } from '../models/UniversalNodeConfig';
-import type { UniversalNodeConfig } from '../nodes/universal/types';
+import { getNodeConfig, listSystemNodes, getNodeConfigForUser } from '../models/Node';
+import type { NodeConfig } from '../nodes/universal/types';
 
 class UniversalNodeRegistry {
-  private cache: Map<string, UniversalNodeConfig> = new Map();
-  private userCache: Map<string, UniversalNodeConfig> = new Map(); // key: userId:nodeId
+  private cache: Map<string, NodeConfig> = new Map();
+  private userCache: Map<string, NodeConfig> = new Map(); // key: userId:nodeId
   private initialized = false;
   
   /**
@@ -25,7 +25,7 @@ class UniversalNodeRegistry {
     
     console.log('[UniversalNodeRegistry] Loading system nodes from MongoDB...');
     
-    const systemNodes = await listSystemUniversalNodes();
+    const systemNodes = await listSystemNodes();
     
     for (const node of systemNodes) {
       this.cache.set(node.nodeId, {
@@ -43,20 +43,20 @@ class UniversalNodeRegistry {
    * Get a universal node config by ID (system nodes only, for backwards compatibility)
    * Checks cache first, then database
    */
-  async get(nodeId: string): Promise<UniversalNodeConfig | null> {
+  async get(nodeId: string): Promise<NodeConfig | null> {
     // Check cache
     if (this.cache.has(nodeId)) {
       return this.cache.get(nodeId)!;
     }
     
     // Load from database
-    const doc = await getUniversalNodeConfig(nodeId);
+    const doc = await getNodeConfig(nodeId);
     
     if (!doc) {
       return null;
     }
     
-    const config: UniversalNodeConfig = {
+    const config: NodeConfig = {
       nodeId: doc.nodeId,
       name: doc.name,
       steps: doc.steps
@@ -78,7 +78,7 @@ class UniversalNodeRegistry {
    * @param nodeId The node identifier
    * @param userId The user ID for priority resolution
    */
-  async getForUser(nodeId: string, userId: string): Promise<UniversalNodeConfig | null> {
+  async getForUser(nodeId: string, userId: string): Promise<NodeConfig | null> {
     const userCacheKey = `${userId}:${nodeId}`;
     
     // Check user-specific cache first
@@ -93,7 +93,7 @@ class UniversalNodeRegistry {
       return null;
     }
     
-    const config: UniversalNodeConfig = {
+    const config: NodeConfig = {
       nodeId: doc.nodeId,
       name: doc.name,
       steps: doc.steps
@@ -160,15 +160,15 @@ export const universalNodeRegistry = new UniversalNodeRegistry();
  * Helper function to get a universal node config
  * Ensures registry is initialized
  */
-export async function getUniversalNode(nodeId: string): Promise<UniversalNodeConfig | null> {
+export async function getUniversalNode(nodeId: string): Promise<NodeConfig | null> {
   await universalNodeRegistry.initialize();
   return universalNodeRegistry.get(nodeId);
 }
 
 /**
  * Helper function to get the raw node document from MongoDB
- * Used to access parameter definitions and other metadata not in UniversalNodeConfig
+ * Used to access parameter definitions and other metadata not in NodeConfig
  */
 export async function getUniversalNodeRaw(nodeId: string): Promise<any | null> {
-  return getUniversalNodeConfig(nodeId);
+  return getNodeConfig(nodeId);
 }

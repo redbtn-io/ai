@@ -1,12 +1,11 @@
 /**
  * Node Registry
  * 
- * Phase 1: Dynamic Graph System
- * Maps GraphNodeType enum values to their implementation functions.
- * This is the authoritative registry for all supported node types.
+ * All graph nodes are executed by the universal node function.
+ * The node's behavior is determined by its config (loaded from MongoDB),
+ * not by a type enum.
  */
 
-import { GraphNodeType } from '../types/graph';
 import { universalNode } from '../nodes/universal/universalNode';
 
 /**
@@ -16,62 +15,16 @@ import { universalNode } from '../nodes/universal/universalNode';
 export type NodeFunction = (state: any) => Promise<any>;
 
 /**
- * Registry mapping node types to implementation functions
- * This map is used by the graph compiler to build dynamic graphs
+ * The single node implementation used by the graph compiler.
+ * Every node in every graph runs through universalNode,
+ * which loads its step config from MongoDB by nodeId.
  */
-export const NODE_REGISTRY: Record<GraphNodeType, NodeFunction> = {
-  [GraphNodeType.PRECHECK]: universalNode,
-  [GraphNodeType.FASTPATH]: universalNode,
-  [GraphNodeType.CONTEXT]: universalNode,
-  [GraphNodeType.CLASSIFIER]: universalNode,
-  [GraphNodeType.ROUTER]: universalNode,
-  [GraphNodeType.PLANNER]: universalNode,
-  [GraphNodeType.EXECUTOR]: universalNode,
-  [GraphNodeType.RESPONDER]: universalNode,
-  [GraphNodeType.SEARCH]: universalNode,
-  [GraphNodeType.SCRAPE]: universalNode,
-  [GraphNodeType.COMMAND]: universalNode,
-  [GraphNodeType.UNIVERSAL]: universalNode
-};
+export { universalNode } from '../nodes/universal/universalNode';
 
 /**
- * Validates that a node type is supported in the registry
- * @param type Node type to validate
- * @returns True if the node type has an implementation
+ * Returns the node function for use by the compiler.
+ * Kept as a function for API consistency if callers need it.
  */
-export function isValidNodeType(type: string): type is GraphNodeType {
-  return type in NODE_REGISTRY;
-}
-
-/**
- * Gets the implementation function for a node type
- * @param type Node type from GraphNodeType enum
- * @returns The node implementation function
- * @throws Error if node type is not found in registry
- */
-export function getNodeFunction(type: GraphNodeType): NodeFunction {
-  const fn = NODE_REGISTRY[type];
-  if (!fn) {
-    throw new Error(`Unknown node type: ${type}. Node type must be registered in NODE_REGISTRY.`);
-  }
-  return fn;
-}
-
-/**
- * Gets all registered node types
- * @returns Array of all valid node type identifiers
- */
-export function getRegisteredNodeTypes(): GraphNodeType[] {
-  return Object.keys(NODE_REGISTRY) as GraphNodeType[];
-}
-
-/**
- * Gets human-readable information about registered nodes
- * Useful for debugging and documentation
- */
-export function getNodeTypeInfo(): Array<{ type: GraphNodeType; name: string }> {
-  return Object.values(GraphNodeType).map(type => ({
-    type,
-    name: type.charAt(0).toUpperCase() + type.slice(1)
-  }));
+export function getNodeFunction(): NodeFunction {
+  return universalNode;
 }

@@ -485,7 +485,7 @@ export type ResolvedParameters = Record<string, any>;
  * - Graph can override via `config.parameters: { temperature: 0.3 }`
  * - At runtime, parameters are merged and available as {{parameters.xxx}}
  */
-export interface UniversalNodeConfig {
+export interface NodeConfig {
   /**
    * Node identifier (e.g., "router", "search", "respond")
    */

@@ -4,14 +4,35 @@
  * 
  * This transport is ideal for internal tools that are tightly coupled to the parent process.
  * No network sockets or ports required - communication happens via process pipes.
+ * 
+ * Tools can publish structured log entries to the parent process via JSON-RPC
+ * notifications (method: "notifications/log"). The parent intercepts these and
+ * forwards them to RedLog for persistence and display in the Log Viewer.
  */
 
 import {
-  Tool,
-  CallToolResult,
-  ServerInfo,
-  ServerCapabilities,
+    Tool,
+    CallToolResult,
+    ServerInfo,
+    ServerCapabilities,
 } from './types';
+
+/**
+ * Log notification payload sent from server → client via JSON-RPC notification.
+ * Mirrors a subset of RedLog's LogEntry fields so the parent can forward directly.
+ */
+export interface StdioLogNotification {
+  level: 'debug' | 'info' | 'success' | 'warn' | 'error';
+  message: string;
+  category?: string;
+  scope?: {
+    conversationId?: string;
+    generationId?: string;
+    runId?: string;
+    [key: string]: string | undefined;
+  };
+  metadata?: Record<string, unknown>;
+}
 
 export abstract class McpServerStdio {
   protected serverInfo: ServerInfo;
@@ -179,6 +200,40 @@ export abstract class McpServerStdio {
     };
     
     process.stdout.write(JSON.stringify(response) + '\n');
+  }
+
+  /**
+   * Send a structured log entry to the parent process via JSON-RPC notification.
+   * The parent intercepts this and forwards to RedLog for the Log Viewer.
+   * 
+   * Also writes to stderr for local debugging visibility.
+   * 
+   * @example
+   *   this.log('info', 'Search started', 'mcp', { conversationId }, { query, count });
+   */
+  protected log(
+    level: StdioLogNotification['level'],
+    message: string,
+    category?: string,
+    scope?: StdioLogNotification['scope'],
+    metadata?: Record<string, unknown>,
+  ): void {
+    // 1. Send notification to parent (forwarded to RedLog)
+    this.sendNotification('notifications/log', {
+      level,
+      message,
+      category,
+      scope,
+      metadata: {
+        ...metadata,
+        server: this.serverInfo.name,
+      },
+    } satisfies StdioLogNotification);
+
+    // 2. Also write to stderr for terminal visibility
+    const ts = new Date().toISOString();
+    const meta = metadata ? ' ' + JSON.stringify(metadata) : '';
+    process.stderr.write(`[${this.serverInfo.name}][${level.toUpperCase()}] ${ts} ${message}${meta}\n`);
   }
 
   /**

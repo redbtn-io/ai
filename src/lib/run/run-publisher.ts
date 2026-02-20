@@ -15,18 +15,18 @@
 
 import type { Redis } from 'ioredis';
 import {
-  type RunState,
-  type RunEvent,
-  type RunOutput,
-  type ToolExecution,
-  type TokenMetadata,
-  RunKeys,
-  RunConfig,
-  createInitialRunState,
-  createNodeProgress,
-  createToolExecution,
+    type RunState,
+    type RunEvent,
+    type RunOutput,
+    type ToolExecution,
+    type TokenMetadata,
+    RunKeys,
+    RunConfig,
+    createInitialRunState,
+    createNodeProgress,
+    createToolExecution,
 } from './types';
-import type { PersistentLogger } from '../logs/persistent-logger';
+import type { RedLog } from '@redbtn/redlog';
 
 // Debug logging - set to true to enable verbose logs
 const DEBUG = false;
@@ -43,8 +43,8 @@ export interface RunPublisherOptions {
   userId: string;
   /** TTL for run state in seconds (default: 1 hour) */
   stateTtl?: number;
-  /** Optional PersistentLogger for MongoDB persistence */
-  logger?: PersistentLogger;
+  /** RedLog instance for structured logging */
+  log?: RedLog;
 }
 
 /**
@@ -81,7 +81,7 @@ export class RunPublisher {
   private readonly runId: string;
   private readonly userId: string;
   private readonly stateTtl: number;
-  private readonly logger?: PersistentLogger;
+  private readonly redlog?: RedLog;
 
   // Cached state for atomic updates
   private state: RunState | null = null;
@@ -92,7 +92,7 @@ export class RunPublisher {
     this.runId = options.runId;
     this.userId = options.userId;
     this.stateTtl = options.stateTtl ?? RunConfig.STATE_TTL_SECONDS;
-    this.logger = options.logger;
+    this.redlog = options.log;
   }
 
   // ===========================================================================
@@ -112,7 +112,7 @@ export class RunPublisher {
   // ===========================================================================
 
   /**
-   * Log to MongoDB via PersistentLogger (if available)
+   * Log to MongoDB via RedLog for persistence and LogViewer
    * This ensures run events are persisted for LogViewer
    */
   private async persistLog(params: {
@@ -121,28 +121,30 @@ export class RunPublisher {
     message: string;
     metadata?: Record<string, unknown>;
   }): Promise<void> {
-    if (!this.logger) return;
+    const meta = {
+      runId: this.runId,
+      userId: this.userId,
+      graphId: this.state?.graphId,
+      graphName: this.state?.graphName,
+      ...params.metadata,
+    };
+
+    // Log via RedLog
+    if (!this.redlog) return;
 
     try {
-      await this.logger.log({
+      await this.redlog.log({
         level: params.level,
-        category: params.category,
         message: params.message,
-        conversationId: this.state?.conversationId,
-        generationId: this.runId, // Use runId as generationId for correlation
-        metadata: {
-          runId: this.runId,
-          userId: this.userId,
-          graphId: this.state?.graphId,
-          graphName: this.state?.graphName,
-          ...params.metadata,
+        category: params.category,
+        scope: {
+          conversationId: this.state?.conversationId,
+          generationId: this.runId,
         },
+        metadata: meta,
       });
     } catch (error) {
-      // Don't let logging errors affect run execution
-      if (DEBUG) {
-        console.error('[RunPublisher] persistLog error:', error);
-      }
+      if (DEBUG) console.error('[RunPublisher] redlog error:', error);
     }
   }
 
@@ -451,6 +453,23 @@ export class RunPublisher {
       data: options?.data,
       timestamp: Date.now(),
     });
+
+    const stepLabel = options?.index != null && options?.total != null
+      ? `Step ${options.index + 1}/${options.total}: ${step}`
+      : `Step: ${step}`;
+
+    await this.persistLog({
+      level: 'info',
+      category: 'node',
+      message: stepLabel,
+      metadata: {
+        nodeId,
+        step,
+        stepIndex: options?.index,
+        totalSteps: options?.total,
+        ...options?.data,
+      },
+    });
   }
 
   /**
@@ -657,6 +676,18 @@ export class RunPublisher {
       progress: options?.progress,
       data: options?.data,
       timestamp: Date.now(),
+    });
+
+    await this.persistLog({
+      level: 'info',
+      category: 'tool',
+      message: `Tool progress: ${step}`,
+      metadata: {
+        toolId,
+        step,
+        progress: options?.progress,
+        ...options?.data,
+      },
     });
   }
 

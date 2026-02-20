@@ -6,7 +6,7 @@
  */
 
 import { Schema, model, Document } from 'mongoose';
-import { GraphConfig, GraphNodeType } from '../types/graph';
+import { GraphConfig } from '../types/graph';
 
 /**
  * Graph document interface (Mongoose document)
@@ -25,8 +25,7 @@ const graphNodeSchema = new Schema({
   },
   type: { 
     type: String, 
-    required: true,
-    enum: Object.values(GraphNodeType)
+    required: false
   },
   neuronId: { 
     type: String, 

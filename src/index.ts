@@ -8,7 +8,7 @@ import 'dotenv/config';
 
 import { MemoryManager } from "./lib/memory/memory";
 import { MessageQueue } from "./lib/memory/queue";
-import { PersistentLogger } from "./lib/logs/persistent-logger";
+import { RedLog } from '@redbtn/redlog';
 import { NeuronRegistry } from "./lib/neurons/NeuronRegistry";
 import { GraphRegistry } from "./lib/graphs/GraphRegistry";
 import * as background from "./functions/background";
@@ -42,9 +42,11 @@ export {
 // Export message queue for background processing
 export { MessageQueue, MessageGenerationState } from "./lib/memory/queue";
 
-// Export logging system
-export * from "./lib/logs";
-export { PersistentLogger } from "./lib/logs/persistent-logger";
+// Re-export redlog for consumers
+export { RedLog } from '@redbtn/redlog';
+export type { LogEntry as RedLogEntry, LogScope, LogQuery, RedLogConfig } from '@redbtn/redlog';
+export { LogReader, LogStream, LogClient } from '@redbtn/redlog';
+export { parseColorTagsToTailwind, parseColorTagsToHtml, parseColorTagsToAnsi, stripColorTags, ColorTags } from '@redbtn/redlog';
 
 // Export thinking utilities for DeepSeek-R1 and similar models
 export { extractThinking, logThinking, extractAndLogThinking } from "./lib/utils/thinking";
@@ -144,7 +146,7 @@ export {
   GraphNotFoundError,
   GraphAccessDeniedError
 } from "./lib/graphs/GraphRegistry";
-export { GraphConfig, GraphNodeConfig, GraphEdgeConfig, CompiledGraph, GraphNodeType } from "./lib/types/graph";
+export { GraphConfig, GraphNodeConfig, GraphEdgeConfig, CompiledGraph } from "./lib/types/graph";
 export { Graph, GraphDocument } from "./lib/models/Graph";
 
 // Export Node model and utilities
@@ -231,7 +233,7 @@ export class Red {
   public graphRegistry!: GraphRegistry; // Phase 1: Dynamic graph system
   public memory!: MemoryManager;
   public messageQueue!: MessageQueue;
-  public logger!: PersistentLogger;
+  public log!: RedLog;
   public mcpRegistry!: McpRegistry; // For external HTTP/SSE servers
   public mcpStdioPool!: StdioServerPool; // For internal stdio servers
   public userMcpManager!: UserMcpManager; // For user's custom MCP connections
@@ -258,14 +260,19 @@ export class Red {
     this.redis = redis;
     this.messageQueue = new MessageQueue(redis);
     
-    // Initialize logger with MongoDB persistence
-    this.logger = new PersistentLogger(redis, this.nodeId || 'default');
+    // Initialize RedLog structured logging
+    this.log = RedLog.create({
+      redis,
+      namespace: 'red',
+      console: false,
+      prefix: 'redlog',
+    });
     
     // Initialize MCP registry for external HTTP/SSE servers
     this.mcpRegistry = new McpRegistry(this.messageQueue);
     
     // Initialize stdio server pool for internal tools (pass messageQueue for tool event publishing)
-    this.mcpStdioPool = new StdioServerPool(undefined, this.messageQueue);
+    this.mcpStdioPool = new StdioServerPool(undefined, this.messageQueue, this.log);
     
     // Initialize user MCP manager for per-user custom connections
     this.userMcpManager = new UserMcpManager();
@@ -502,12 +509,11 @@ export class Red {
     }
     
     // Log tool call start
-    await this.logger.log({
+    await this.log.log({
       level: 'info',
-      category: 'mcp',
       message: `📡 MCP Tool Call: ${toolName}`,
-      conversationId: context?.conversationId,
-      generationId: context?.generationId,
+      category: 'mcp',
+      scope: { conversationId: context?.conversationId, generationId: context?.generationId },
       metadata: {
         toolName,
         args: this.sanitizeArgsForLogging(args),
@@ -523,14 +529,13 @@ export class Red {
           const result = await this.userMcpManager.callTool(context.userId, toolName, args, context);
           const duration = Date.now() - startTime;
 
-          await this.logger.log({
+          await this.log.log({
             level: result.isError ? 'warn' : 'success',
-            category: 'mcp',
             message: result.isError 
               ? `⚠️ MCP Tool Error: ${toolName} (${duration}ms)`
               : `✓ MCP Tool Complete: ${toolName} (${duration}ms)`,
-            conversationId: context?.conversationId,
-            generationId: context?.generationId,
+            category: 'mcp',
+            scope: { conversationId: context?.conversationId, generationId: context?.generationId },
             metadata: {
               toolName,
               duration,
@@ -553,22 +558,40 @@ export class Red {
       const result = await this.mcpStdioPool.callTool(toolName, args, context);
       const duration = Date.now() - startTime;
 
-      // Log success
-      await this.logger.log({
+      // Log success with enriched metadata
+      const resultText = result.content?.[0]?.text || '';
+      const resultLength = resultText.length;
+      
+      // Build enriched metadata for the log viewer
+      const completionMeta: Record<string, unknown> = {
+        toolName,
+        duration,
+        isError: result.isError || false,
+        resultLength,
+        protocol: 'MCP/stdio',
+      };
+
+      // Add tool-specific metadata for richer log entries
+      if (toolName === 'web_search') {
+        // Extract source count from "## Title" headers in result
+        const sourceHeaders = (resultText.match(/^## /gm) || []).length;
+        completionMeta.sourceCount = sourceHeaders;
+        // Include a short preview (first 300 chars) for debugging result quality
+        completionMeta.resultPreview = resultText.length > 300 ? resultText.substring(0, 300) + '...' : resultText;
+        completionMeta.query = args.query;
+      } else if (toolName === 'scrape_url') {
+        completionMeta.url = args.url;
+        completionMeta.resultPreview = resultText.length > 300 ? resultText.substring(0, 300) + '...' : resultText;
+      }
+
+      await this.log.log({
         level: result.isError ? 'warn' : 'success',
-        category: 'mcp',
         message: result.isError 
           ? `⚠️ MCP Tool Error: ${toolName} (${duration}ms)`
           : `✓ MCP Tool Complete: ${toolName} (${duration}ms)`,
-        conversationId: context?.conversationId,
-        generationId: context?.generationId,
-        metadata: {
-          toolName,
-          duration,
-          isError: result.isError || false,
-          resultLength: result.content?.[0]?.text?.length || 0,
-          protocol: 'MCP/stdio'
-        }
+        category: 'mcp',
+        scope: { conversationId: context?.conversationId, generationId: context?.generationId },
+        metadata: completionMeta,
       });
 
       return result;
@@ -587,14 +610,13 @@ export class Red {
         });
         const duration = Date.now() - startTime;
 
-        await this.logger.log({
+        await this.log.log({
           level: result.isError ? 'warn' : 'success',
-          category: 'mcp',
           message: result.isError 
             ? `⚠️ MCP Tool Error: ${toolName} (${duration}ms)`
             : `✓ MCP Tool Complete: ${toolName} (${duration}ms)`,
-          conversationId: context?.conversationId,
-          generationId: context?.generationId,
+          category: 'mcp',
+          scope: { conversationId: context?.conversationId, generationId: context?.generationId },
           metadata: {
             toolName,
             duration,
@@ -611,12 +633,11 @@ export class Red {
         const errorMessage = httpError instanceof Error ? httpError.message : String(httpError);
 
         // Log error
-        await this.logger.log({
+        await this.log.log({
           level: 'error',
-          category: 'mcp',
           message: `✗ MCP Tool Failed: ${toolName} (${duration}ms)`,
-          conversationId: context?.conversationId,
-          generationId: context?.generationId,
+          category: 'mcp',
+          scope: { conversationId: context?.conversationId, generationId: context?.generationId },
           metadata: {
             toolName,
             duration,

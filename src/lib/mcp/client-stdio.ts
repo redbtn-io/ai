@@ -8,10 +8,14 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { CallToolResult, ToolsListResult } from './types';
+import type { StdioLogNotification } from './server-stdio';
 import { EventEmitter } from 'events';
+
+export type StdioLogHandler = (serverName: string, log: StdioLogNotification) => void;
 
 export class McpClientStdio {
   private url: string; // Format: "node:path/to/script.js" or "tsx:path/to/script.ts"
+  private serverName: string;  // Extracted server name for log attribution
   private process?: ChildProcess;
   private buffer: string = '';
   private requestId: number = 1;
@@ -21,9 +25,19 @@ export class McpClientStdio {
   }> = new Map();
   private eventEmitter: EventEmitter = new EventEmitter();
   private connected: boolean = false;
+  private logHandler?: StdioLogHandler;
 
-  constructor(url: string) {
+  constructor(url: string, serverName?: string) {
     this.url = url;
+    this.serverName = serverName || url.split('/').pop()?.replace(/\.(ts|js)$/, '') || 'unknown';
+  }
+
+  /**
+   * Register a handler for log notifications from the child process.
+   * Called by the StdioServerPool to forward logs to RedLog.
+   */
+  public onLog(handler: StdioLogHandler): void {
+    this.logHandler = handler;
   }
 
   /**
@@ -230,6 +244,8 @@ export class McpClientStdio {
       console.log(`[MCP Stdio Client] Notification: ${data.method}`);
       if (data.method === 'initialized') {
         this.eventEmitter.emit('initialized');
+      } else if (data.method === 'notifications/log' && this.logHandler) {
+        this.logHandler(this.serverName, data.params as StdioLogNotification);
       }
       return;
     }

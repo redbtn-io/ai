@@ -17,7 +17,7 @@
  * - Resolved parameters are available as {{parameters.xxx}} in templates
  */
 
-import type { UniversalNodeConfig, UniversalStep, ResolvedParameters } from './types';
+import type { NodeConfig, UniversalStep, ResolvedParameters } from './types';
 import { executeStep } from './stepExecutor';
 import { getNodeSystemPrefix } from '../../utils/node-helpers';
 import {
@@ -62,9 +62,9 @@ function createNodeEventPublisher(state: any): NodeEventPublisher | null {
 }
 
 /**
- * Universal node function compatible with NODE_REGISTRY
+ * Universal node function — the single execution entry point for all graph nodes.
  * 
- * The universal node configuration is injected into state as nodeConfig by the compiler.
+ * Config is loaded from MongoDB by nodeId. Supports two modes:
  * This follows the same pattern as other configurable nodes (responder, context, etc.)
  * 
  * Supports two configuration modes:
@@ -81,7 +81,7 @@ function createNodeEventPublisher(state: any): NodeEventPublisher | null {
  */
 export const universalNode = async (state: any): Promise<Partial<any>> => {
   // Extract node config (injected by compiler)
-  let nodeConfig: UniversalNodeConfig = (state as any).nodeConfig || {};
+  let nodeConfig: NodeConfig = (state as any).nodeConfig || {};
   
   // Extract graph-level parameter overrides (passed from graph node config)
   const graphParameters: ResolvedParameters = (nodeConfig as any).parameters || {};
@@ -427,7 +427,7 @@ function deepMergeObjects(target: any, source: any, depth = 0, seen = new WeakSe
  * @param nodeConfig - Configuration to validate
  * @throws Error if configuration is invalid
  */
-export function validateUniversalNodeConfig(nodeConfig: UniversalNodeConfig): void {
+export function validateUniversalNodeConfig(nodeConfig: NodeConfig): void {
   // Check for configuration format
   if (!nodeConfig.steps && (!nodeConfig.type || !nodeConfig.config)) {
     throw new Error(

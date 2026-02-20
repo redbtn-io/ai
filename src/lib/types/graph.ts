@@ -1,28 +1,11 @@
 /**
  * Graph System Type Definitions
  * 
- * Phase 1: Dynamic Graph System
- * These types define the structure for storing and compiling graph configurations.
+ * Defines the structure for storing and compiling graph configurations.
+ * All nodes are universal nodes — the graph compiler routes every node
+ * through the same universalNode function, which loads its config from
+ * the `nodes` collection in MongoDB by `config.nodeId`.
  */
-
-/**
- * Supported graph node types
- * Maps to implementation functions in nodeRegistry.ts
- */
-export enum GraphNodeType {
-  PRECHECK = 'precheck',
-  FASTPATH = 'fastpath',
-  CONTEXT = 'context',
-  CLASSIFIER = 'classifier',
-  ROUTER = 'router',
-  PLANNER = 'planner',
-  EXECUTOR = 'executor',
-  RESPONDER = 'responder',
-  SEARCH = 'search',
-  SCRAPE = 'scrape',
-  COMMAND = 'command',
-  UNIVERSAL = 'universal'
-}
 
 /**
  * System default graph IDs (Phase 2: Dynamic Graph System)
@@ -44,19 +27,16 @@ export type SystemTemplateId = typeof SYSTEM_TEMPLATES[keyof typeof SYSTEM_TEMPL
  * Node definition in graph configuration
  */
 export interface GraphNodeConfig {
-  /** Unique node identifier within the graph (e.g., "classifier", "responder") */
+  /** Unique node identifier within the graph (e.g., "context", "router") */
   id: string;
-  
-  /** Node type - maps to implementation function via NODE_REGISTRY */
-  type: GraphNodeType;
   
   /** Optional neuron override for this specific node (null = use user default) */
   neuronId?: string | null;
   
   /** 
-   * Node-specific configuration options
-   * For universal nodes, this should include:
-   * - nodeId: string - The universal node to use
+   * Node configuration — must include nodeId to look up the node config from MongoDB.
+   * 
+   * - nodeId: string - The node to load from the `nodes` collection
    * - parameters?: Record<string, any> - Parameter overrides for this node instance
    * 
    * Example:
@@ -251,13 +231,6 @@ export interface CompiledGraph {
   
   /** Timestamp when graph was compiled */
   compiledAt: Date;
-}
-
-/**
- * Type guard to check if a string is a valid GraphNodeType
- */
-export function isGraphNodeType(value: string): value is GraphNodeType {
-  return Object.values(GraphNodeType).includes(value as GraphNodeType);
 }
 
 /**

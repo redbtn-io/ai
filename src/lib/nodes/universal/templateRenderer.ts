@@ -149,12 +149,12 @@ export function renderParameters(
       }
       
       // Check if this is a pure state reference that should preserve type
+      // Preserves primitives, objects, and arrays (for MCP tool params that accept complex types)
       const stateMatch = processValue.match(/^\{\{state\.(.+)\}\}$/);
       if (stateMatch) {
         const path = stateMatch[1];
         const resolved = getNestedProperty(state, path);
-        if (resolved !== undefined && typeof resolved !== 'object') {
-          // Preserve original type for primitives
+        if (resolved !== undefined) {
           rendered[key] = resolved;
           continue;
         }

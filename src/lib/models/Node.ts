@@ -748,9 +748,3 @@ export async function getAllTags(userId?: string): Promise<string[]> {
   return result.map(r => r._id);
 }
 
-// Re-export with old names for backwards compatibility
-export const UniversalNodeConfigModel = NodeModel;
-export const getUniversalNodeConfig = getNodeConfig;
-export const listSystemUniversalNodes = listSystemNodes;
-export const listUserUniversalNodes = listUserNodes;
-export const saveUniversalNodeConfig = saveNodeConfig;
