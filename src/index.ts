@@ -184,8 +184,8 @@ export interface RedConfig {
   redisUrl: string; // URL for connecting to the Redis instance, global state store
   vectorDbUrl: string; // URL for connecting to the vector database, short to medium term memory
   databaseUrl: string; // URL for connecting to the traditional database, long term memory
-  chatLlmUrl: string; // URL for the chat LLM (e.g., Ollama on 192.168.1.4:11434)
-  workLlmUrl: string; // URL for the worker LLM (e.g., Ollama on 192.168.1.3:11434)
+  chatLlmUrl: string; // URL for the chat LLM (e.g., Ollama on chatter.redbtn.io:11434)
+  workLlmUrl: string; // URL for the worker LLM (e.g., Ollama on chatter.redbtn.io:11434)
   llmEndpoints?: { [agentName: string]: string }; // Map of named agents to specific LLM endpoint URLs
   disableMcp?: boolean; // Skip MCP stdio server initialization (for webapp, tools come from DB)
 }

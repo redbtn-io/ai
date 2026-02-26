@@ -14,6 +14,7 @@
  */
 
 import type { Redis } from 'ioredis';
+import { StreamPublisher, StreamSubscriber } from '@red/stream';
 import {
     type RunState,
     type RunEvent,
@@ -812,82 +813,35 @@ export class RunPublisher {
    */
   subscribe(): RunSubscription {
     const channel = RunKeys.stream(this.runId);
-    const subscriber = this.redis.duplicate();
+    const eventsKey = RunKeys.events(this.runId);
 
-    let resolveReady: () => void;
-    const ready = new Promise<void>((resolve) => {
-      resolveReady = resolve;
+    const sub = new StreamSubscriber({
+      redis: this.redis,
+      channel,
+      eventsKey,
     });
 
-    // Create async generator for events
-    const eventQueue: RunEvent[] = [];
-    let resolveNext: ((value: IteratorResult<RunEvent, void>) => void) | null =
-      null;
-    let done = false;
-
-    const messageHandler = (_ch: string, message: string) => {
-      try {
-        const event = JSON.parse(message) as RunEvent;
-
-        // If there's a pending next(), resolve it immediately
-        if (resolveNext) {
-          const resolve = resolveNext;
-          resolveNext = null;
-          resolve({ value: event, done: false });
-        } else {
-          // Queue the event for later consumption
-          eventQueue.push(event);
-        }
-
-        // Check for terminal events
-        if (
-          event.type === 'run_complete' ||
-          event.type === 'run_error'
-        ) {
-          done = true;
-        }
-      } catch (error) {
-        console.error('Failed to parse run event:', error);
-      }
-    };
-
-    subscriber.on('message', messageHandler);
-
-    // Start subscription
-    subscriber.subscribe(channel).then(() => {
-      resolveReady!();
+    const generator = sub.subscribe({
+      catchUp: true,
+      terminalEvents: ['run_complete', 'run_error'],
+      idleTimeoutMs: 30_000,
+      isAlive: async () => {
+        const state = await this.getState();
+        return state !== null && state.status !== 'completed' && state.status !== 'error';
+      },
     });
 
-    async function* eventGenerator(): AsyncGenerator<RunEvent, void, unknown> {
-      while (!done || eventQueue.length > 0) {
-        if (eventQueue.length > 0) {
-          yield eventQueue.shift()!;
-        } else if (!done) {
-          // Wait for next event
-          const result = await new Promise<IteratorResult<RunEvent, void>>(
-            (resolve) => {
-              resolveNext = resolve;
-            }
-          );
-          if (!result.done) {
-            yield result.value;
-          }
-        }
-      }
-    }
+    // StreamSubscriber's subscribe() is ready immediately after the first yield
+    // but RunPublisher API expects an explicit ready promise.
+    // We resolve it immediately since StreamSubscriber handles the subscribe-first pattern internally.
+    const ready = Promise.resolve();
 
     const unsubscribe = async () => {
-      done = true;
-      if (resolveNext) {
-        resolveNext({ value: undefined, done: true });
-      }
-      subscriber.off('message', messageHandler);
-      await subscriber.unsubscribe(channel);
-      await subscriber.quit();
+      await generator.return(undefined);
     };
 
     return {
-      stream: eventGenerator(),
+      stream: generator as AsyncGenerator<RunEvent, void, unknown>,
       ready,
       unsubscribe,
     };
@@ -936,54 +890,55 @@ export class RunPublisher {
   private async publish(event: RunEvent): Promise<void> {
     const channel = RunKeys.stream(this.runId);
     const eventsKey = RunKeys.events(this.runId);
-    const eventJson = JSON.stringify(event);
-    
-    try {
-      if (DEBUG) {
-        const now = Date.now();
-        const evtTs = (event as any).timestamp as number | undefined;
-        const delta = evtTs ? now - evtTs : undefined;
-         
-        console.log(`[RunPublisher] publish run=${this.runId} type=${event.type} delta_ms=${delta ?? 'n/a'}`);
-      }
-    } catch (err) {
-      // ignore logging errors
-    }
 
-    // Store event in list for replay AND publish to pub/sub for live subscribers
-    // Using pipeline for atomicity
-    await this.redis
-      .pipeline()
-      .rpush(eventsKey, eventJson)
-      .expire(eventsKey, this.stateTtl)
-      .publish(channel, eventJson)
-      .exec();
+    // Use StreamPublisher for the low-level pub/sub + event list storage
+    const pub = new StreamPublisher({
+      redis: this.redis,
+      channel,
+      eventsKey,
+      ttl: this.stateTtl,
+    });
+
+    await pub.publish(event as unknown as Record<string, unknown> & { type: string });
   }
 
   /**
    * Get all events for this run (for replay when client connects late)
    */
   async getEvents(): Promise<RunEvent[]> {
-    const eventsKey = RunKeys.events(this.runId);
-    const events = await this.redis.lrange(eventsKey, 0, -1);
-    return events.map(e => JSON.parse(e) as RunEvent);
+    const pub = new StreamPublisher({
+      redis: this.redis,
+      channel: RunKeys.stream(this.runId),
+      eventsKey: RunKeys.events(this.runId),
+      ttl: this.stateTtl,
+    });
+    return await pub.getEvents() as RunEvent[];
   }
 
   /**
    * Get events starting from a specific index (for incremental replay)
    */
   async getEventsSince(startIndex: number): Promise<RunEvent[]> {
-    const eventsKey = RunKeys.events(this.runId);
-    const events = await this.redis.lrange(eventsKey, startIndex, -1);
-    return events.map(e => JSON.parse(e) as RunEvent);
+    const pub = new StreamPublisher({
+      redis: this.redis,
+      channel: RunKeys.stream(this.runId),
+      eventsKey: RunKeys.events(this.runId),
+      ttl: this.stateTtl,
+    });
+    return await pub.getEventsSince(startIndex) as RunEvent[];
   }
 
   /**
    * Get the current event count
    */
   async getEventCount(): Promise<number> {
-    const eventsKey = RunKeys.events(this.runId);
-    return await this.redis.llen(eventsKey);
+    const pub = new StreamPublisher({
+      redis: this.redis,
+      channel: RunKeys.stream(this.runId),
+      eventsKey: RunKeys.events(this.runId),
+      ttl: this.stateTtl,
+    });
+    return await pub.getEventCount();
   }
 
   private findTool(toolId: string): ToolExecution | undefined {

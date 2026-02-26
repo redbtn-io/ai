@@ -131,8 +131,8 @@ VECTOR_DB_URL=http://localhost:8200
 DATABASE_URL=mongodb://localhost:27017/red-webapp
 
 # LLM Endpoints
-CHAT_LLM_URL=http://192.168.1.4:11434  # Primary chat model
-WORK_LLM_URL=http://192.168.1.3:11434  # Worker model for routing/tools
+CHAT_LLM_URL=http://chatter.redbtn.io:11434  # Primary chat model
+WORK_LLM_URL=http://worker.redbtn.io:11434  # Worker model for routing/tools
 ```
 
 Example-specific variables are documented in each example's README.

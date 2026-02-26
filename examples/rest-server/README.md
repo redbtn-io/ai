@@ -36,8 +36,8 @@ VECTOR_DB_URL=http://localhost:8200
 DATABASE_URL=mongodb://localhost:27017/red-webapp
 
 # LLM endpoints
-CHAT_LLM_URL=http://192.168.1.4:11434
-WORK_LLM_URL=http://192.168.1.3:11434
+CHAT_LLM_URL=http://chatter.redbtn.io:11434
+WORK_LLM_URL=http://worker.redbtn.io:11434
 
 # Optional: Override bearer token
 BEARER_TOKEN=your_custom_token_here

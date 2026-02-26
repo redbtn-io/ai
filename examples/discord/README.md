@@ -57,8 +57,8 @@ DISCORD_BOT_TOKEN=your_discord_bot_token_here
 REDIS_URL=redis://localhost:6379
 VECTOR_DB_URL=http://localhost:8200
 DATABASE_URL=mongodb://localhost:27017/red-webapp
-CHAT_LLM_URL=http://192.168.1.4:11434
-WORK_LLM_URL=http://192.168.1.3:11434
+CHAT_LLM_URL=http://chatter.redbtn.io:11434
+WORK_LLM_URL=http://worker.redbtn.io:11434
 ```
 
 ### 5. Start MCP Servers
@@ -195,8 +195,8 @@ The bot respects token limits:
 | `REDIS_URL` | No | `redis://localhost:6379` | Redis connection URL |
 | `VECTOR_DB_URL` | No | `http://localhost:8200` | Vector database URL |
 | `DATABASE_URL` | No | `mongodb://localhost:27017/red-webapp` | MongoDB URL |
-| `CHAT_LLM_URL` | No | `http://192.168.1.4:11434` | Primary LLM endpoint |
-| `WORK_LLM_URL` | No | `http://192.168.1.3:11434` | Worker LLM endpoint |
+| `CHAT_LLM_URL` | No | `http://chatter.redbtn.io:11434` | Primary LLM endpoint |
+| `WORK_LLM_URL` | No | `http://chatter.redbtn.io:11434` | Worker LLM endpoint |
 
 ### Code Constants
 
